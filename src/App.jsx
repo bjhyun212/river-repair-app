@@ -41,6 +41,12 @@ const PRICE_DB = {
   "#.281":{name:"비닐깔기",spec:"",unit:"m²",labor:32,material:647,expense:0,total:679},
   "#.282":{name:"물푸기",spec:"",unit:"hr",labor:1139,material:2463,expense:635,total:4237},
   "#.326":{name:"절삭후아스팔트덧씌우기",spec:"B-Type(1회절삭,1회포장)",unit:"m²",labor:1873,material:919,expense:1189,total:3981},
+  "#.308":{name:"보조기층포설및다짐",spec:"기계시공-본선포장",unit:"m³",labor:2806,material:943,expense:1206,total:4955},
+  "#.310":{name:"프라임코팅",spec:"RS(C)-3,기계",unit:"m²",labor:31,material:6,expense:6,total:43},
+  "#.312":{name:"택코팅",spec:"RS(C)-4,기계",unit:"m²",labor:31,material:6,expense:6,total:43},
+  "#.314":{name:"기층아스콘포설및다짐",spec:"소형장비(5-7cm)",unit:"m²",labor:1973,material:281,expense:510,total:2764},
+  "#.321":{name:"표층아스콘포설및다짐",spec:"소형장비",unit:"m²",labor:2158,material:307,expense:558,total:3023},
+  "#.185":{name:"레미콘타설(펌프차)",spec:"무근(S:8-12cm),TYPE-Ⅱ",unit:"m³",labor:14372,material:2355,expense:4366,total:21093},
   "#.481":{name:"교통통제및안전처리",spec:"500M미만",unit:"일",labor:339608,material:0,expense:0,total:339608},
 };
 
@@ -491,9 +497,34 @@ ${currentDamage || "(없음)"}
     // 되메우기 (공통)
     if(allStructQty>0) push("1.","되메우기 및 다짐","소형장비","m³",Math.round(allStructQty*0.2)||10,"#.70",`되메우기: 잔여공간 되메우기 및 다짐=${Math.round(allStructQty*0.2)}㎥`);
 
-    // 3. 포장공
+    // 3. 포장공 — 기층/표층 세부 공종 반영
     paveItems.forEach(d=>{
-      push("3.","절삭후아스팔트덧씌우기","B-Type(1회절삭,1회포장)","m²",d.qty,"#.326",`${d.item}: 포장면적=${d.qty}㎡ (${d.basis||"피해현황 참조"})`);
+      const A=d.qty, label=d.item;
+      if(d.item.match(/기층/)){
+        // 아스팔트 기층포장
+        const japV=+(A*0.1).toFixed(1);  // 보조기층 잡석 T=0.1m
+        push("3.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}: ${A}㎡×T0.1m=${japV}㎥`);
+        push("3.","프라임코팅","RS(C)-3,기계","m²",A,"#.310",`${label}: 포장면적=${A}㎡`);
+        push("3.","기층아스콘포설및다짐","소형장비(5-7cm)","m²",A,"#.314",`${label}: 기층 T=5~7cm, 면적=${A}㎡`);
+      }
+      else if(d.item.match(/표층/)){
+        // 아스팔트 표층포장
+        push("3.","택코팅","RS(C)-4,기계","m²",A,"#.312",`${label}: 포장면적=${A}㎡`);
+        push("3.","표층아스콘포설및다짐","소형장비","m²",A,"#.321",`${label}: 표층 T=5cm, 면적=${A}㎡`);
+      }
+      else if(d.item.match(/절삭|덧씌/)){
+        // 절삭후 덧씌우기
+        push("3.","절삭후아스팔트덧씌우기","B-Type(1회절삭,1회포장)","m²",A,"#.326",`${label}: 절삭+덧씌우기 면적=${A}㎡ (${d.basis||""})`);
+      }
+      else {
+        // 일반 도로포장 → 기층+표층 전면 재포장
+        const japV=+(A*0.15).toFixed(1);
+        push("3.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}: 보조기층 ${A}㎡×T0.15m=${japV}㎥`);
+        push("3.","프라임코팅","RS(C)-3,기계","m²",A,"#.310",`${label}: 기층 하부 프라임코팅=${A}㎡`);
+        push("3.","기층아스콘포설및다짐","소형장비(5-7cm)","m²",A,"#.314",`${label}: 기층 T=5~7cm, 면적=${A}㎡`);
+        push("3.","택코팅","RS(C)-4,기계","m²",A,"#.312",`${label}: 표층 하부 택코팅=${A}㎡`);
+        push("3.","표층아스콘포설및다짐","소형장비","m²",A,"#.321",`${label}: 표층 T=5cm, 면적=${A}㎡`);
+      }
     });
 
     // 사면
@@ -588,9 +619,10 @@ ${currentDamage || "(없음)"}
                 <p className="text-slate-300 text-xs leading-relaxed">{recoveryPlan.method}</p>
               </div>
               <div>
-                <p className="text-blue-200 font-medium mb-1">공종계획</p>
+                <p className="text-blue-200 font-medium mb-1">개선복구 설계물량</p>
                 <div className="text-slate-300 text-xs leading-relaxed space-y-0.5">
-                  {recoveryPlan.steps.map((s,i)=><p key={i}>{s}</p>)}
+                  {damage.filter(d=>d.enabled).map((d,i)=><p key={d.id}>{i+1}. {d.item}: {d.qty}{d.unit} ({d.basis||""})</p>)}
+                  {damage.filter(d=>d.enabled).length===0&&<p className="text-slate-500">피해현황을 입력하세요</p>}
                 </div>
               </div>
             </div>
