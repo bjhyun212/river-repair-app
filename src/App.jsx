@@ -1,5 +1,4 @@
 import React, { useState, useRef } from 'react';
-import { matchPrice } from './unitPrices.js';
 
 const fmt = (n) => (n ?? 0).toLocaleString('ko-KR');
 const fmtQty = (n, unit) => {
@@ -74,34 +73,10 @@ export default function App() {
     }
   };
 
-  // 2025년 단가 강제 매칭 — AI 응답 단가를 PDF 단가로 덮어쓰기
-  const enrichWithPrices = (data) => {
-    const categories = ['토공', '구조물공', '포장공', '부대공'];
-    for (const cat of categories) {
-      if (!data.items[cat]) continue;
-      data.items[cat] = data.items[cat].map(item => {
-        const matched = matchPrice(item);
-        if (matched) {
-          return {
-            ...item,
-            priceId: matched.id,
-            spec: matched.spec,
-            unit: matched.unit,
-            labor: matched.labor,
-            material: matched.material,
-            expense: matched.expense,
-            priceSource: matched.source,
-          };
-        }
-        // 매칭 실패 — AI 원본 단가 유지 + 경고 표시
-        return {
-          ...item,
-          priceSource: '⚠ 물가정보 확인필요',
-        };
-      });
-    }
-    return data;
-  };
+  const [showImageModal, setShowImageModal] = useState(false);
+
+  // 서버에서 이미 2025년 단가가 적용되므로 추가 매칭 불필요
+  const enrichWithPrices = (data) => data;
 
   const handleConfirm = () => setStep('report');
 
@@ -212,7 +187,8 @@ export default function App() {
         {step === 'review' && analysisData && (
           <ReviewSection data={analysisData} imagePreview={imagePreview}
             onConfirm={handleConfirm} onBack={() => setStep('upload')}
-            userComment={userComment} setUserComment={setUserComment} />
+            userComment={userComment} setUserComment={setUserComment}
+            onImageClick={() => setShowImageModal(true)} />
         )}
         {step === 'report' && analysisData && (
           <ReportSection data={analysisData} siteName={siteName}
@@ -220,7 +196,8 @@ export default function App() {
             onExcelEstimate={handleExcelEstimate}
             onExcelQuantity={handleExcelQuantity}
             onExcelUnitprice={handleExcelUnitprice}
-            excelLoading={excelLoading} onBack={() => setStep('review')} />
+            excelLoading={excelLoading} onBack={() => setStep('review')}
+            onImageClick={() => setShowImageModal(true)} />
         )}
       </main>
 
@@ -228,6 +205,19 @@ export default function App() {
         소규모주민숙원사업 설계 AI 분석 시스템 v4.0 · 충청북도 2025년 단가목록 기준
         <br />※ 단가적용 원칙: 2025년 단가목록 우선 → 유사공종 적용 → 물가정보/가격정보 단가 적용
       </footer>
+
+      {/* 사진 확대 모달 */}
+      {showImageModal && imagePreview && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 z-50 flex items-center justify-center p-4"
+          onClick={() => setShowImageModal(false)}>
+          <div className="relative max-w-4xl max-h-[90vh]">
+            <img src={imagePreview} alt="현장사진 확대" className="max-w-full max-h-[90vh] rounded-lg shadow-2xl" />
+            <button onClick={() => setShowImageModal(false)}
+              className="absolute top-2 right-2 bg-white bg-opacity-80 rounded-full w-8 h-8 flex items-center justify-center text-gray-800 font-bold hover:bg-opacity-100">✕</button>
+            <p className="text-white text-center text-xs mt-2 opacity-70">클릭하면 닫힙니다</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -317,7 +307,7 @@ function AnalyzingView({ imagePreview }) {
 }
 
 // ─── 검토 섹션 ───
-function ReviewSection({ data, imagePreview, onConfirm, onBack, userComment, setUserComment }) {
+function ReviewSection({ data, imagePreview, onConfirm, onBack, userComment, setUserComment, onImageClick }) {
   const a = data.analysis;
   const gwTotal = (data.materials?.관급 || []).reduce((s, m) => s + Math.round((m.unitPrice || 0) * (m.qty || 0)), 0);
   const sagubTotal = (data.materials?.사급 || []).reduce((s, m) => s + Math.round((m.unitPrice || 0) * (m.qty || 0)), 0);
@@ -329,7 +319,7 @@ function ReviewSection({ data, imagePreview, onConfirm, onBack, userComment, set
         <h2 className="text-lg font-bold text-blue-700 mb-4">설계물량 검토</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          {imagePreview && <img src={imagePreview} alt="" className="rounded-lg shadow max-h-64 object-cover w-full" />}
+          {imagePreview && <img src={imagePreview} alt="" onClick={onImageClick} className="rounded-lg shadow max-h-64 object-cover w-full cursor-pointer hover:opacity-90 transition" title="클릭하면 크게 봅니다" />}
           <div className="space-y-2">
             <InfoRow label="현장명" value={a.siteName || '—'} />
             <InfoRow label="위치" value={a.riverBank || '—'} />
@@ -424,7 +414,7 @@ function ReviewSection({ data, imagePreview, onConfirm, onBack, userComment, set
 }
 
 // ─── 보고서 섹션 ───
-function ReportSection({ data, siteName, imagePreview, onExcelEstimate, onExcelQuantity, onExcelUnitprice, excelLoading, onBack }) {
+function ReportSection({ data, siteName, imagePreview, onExcelEstimate, onExcelQuantity, onExcelUnitprice, excelLoading, onBack, onImageClick }) {
   const a = data.analysis;
   const allCats = ['토공', '구조물공', '포장공', '부대공'];
 

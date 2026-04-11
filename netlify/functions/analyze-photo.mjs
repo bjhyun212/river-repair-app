@@ -1,73 +1,120 @@
 // netlify/functions/analyze-photo.mjs
-// 현장 사진을 받아 Claude API로 분석하고 물량·단가 산출 결과를 반환
+// AI 분석 후 서버에서 2025년 단가를 강제 적용
+
+const PRICE_DB = {
+  "#.19":{name:"표토제거(답구간)",spec:"불도저19ton,T=20CM",unit:"㎡",labor:225,material:144,expense:135},
+  "#.21":{name:"표토제거(답구간)",spec:"T=20CM,굴삭기0.7㎥",unit:"㎡",labor:248,material:77,expense:104},
+  "#.22":{name:"표토제거(답외구간)",spec:"T=20CM,굴삭기0.7㎥",unit:"㎡",labor:191,material:59,expense:80},
+  "#.23":{name:"벌개제근",spec:"뿌리뽑기",unit:"㎡",labor:394,material:28,expense:62},
+  "#.27":{name:"흙깍기(보통토사,중규모)",spec:"불도저19TON",unit:"㎥",labor:815,material:522,expense:489},
+  "#.28":{name:"흙깍기(보통토사,소규모)",spec:"굴착기1.0㎥",unit:"㎥",labor:1472,material:774,expense:747},
+  "#.31":{name:"흙깍기(혼합토사,소규모)",spec:"굴착기1.0㎥",unit:"㎥",labor:1985,material:1124,expense:1007},
+  "#.36":{name:"토사깍기",spec:"굴삭기0.7㎥",unit:"㎥",labor:887,material:277,expense:373},
+  "#.57":{name:"구조물터파기(육상토사)",spec:"기계100%",unit:"㎥",labor:1035,material:323,expense:435},
+  "#.58":{name:"구조물터파기(수중토사)",spec:"기계100%",unit:"㎥",labor:1452,material:454,expense:610},
+  "#.61":{name:"흙쌓기(노체)",spec:"다짐도90%이상",unit:"㎥",labor:1555,material:544,expense:720},
+  "#.68":{name:"뒤채움 및 다짐",spec:"소형장비",unit:"㎥",labor:9507,material:1337,expense:1467},
+  "#.69":{name:"뒤채움 및 다짐",spec:"대형장비",unit:"㎥",labor:6009,material:1601,expense:1784},
+  "#.70":{name:"되메우기 및 다짐",spec:"소형장비",unit:"㎥",labor:8044,material:1131,expense:1241},
+  "#.71":{name:"되메우기 및 다짐",spec:"대형장비",unit:"㎥",labor:5180,material:1380,expense:1538},
+  "#.85":{name:"성토면고르기",spec:"",unit:"㎡",labor:430,material:226,expense:218},
+  "#.87":{name:"절토사면 녹화",spec:"T=10㎝",unit:"㎡",labor:28320,material:22842,expense:4324},
+  "#.127":{name:"사토운반(토사)",spec:"L=5.0KM",unit:"㎥",labor:4001,material:1876,expense:1525},
+  "#.140":{name:"잔디붙임",spec:"평떼",unit:"㎡",labor:6022,material:5203,expense:0},
+  "#.1":{name:"무근콘크리트깨기",spec:"30Cm미만(기계100%)",unit:"㎥",labor:19754,material:5027,expense:8779},
+  "#.7":{name:"석축헐기(기계)",spec:"찰쌓기",unit:"㎡",labor:6258,material:1524,expense:2783},
+  "#.75":{name:"기초지정(모래)",spec:"모래",unit:"㎥",labor:7708,material:678,expense:1017},
+  "#.76":{name:"기초지정(자갈)",spec:"자갈",unit:"㎥",labor:8479,material:861,expense:1224},
+  "#.77":{name:"기초지정(잡석)",spec:"잡석",unit:"㎥",labor:9421,material:956,expense:1360},
+  "#.152":{name:"석축쌓기(메쌓기)",spec:"T=35cm이하",unit:"㎡",labor:57374,material:5818,expense:11095},
+  "#.155":{name:"석축쌓기(찰쌓기)",spec:"T=35cm이하",unit:"㎡",labor:50146,material:4625,expense:8819},
+  "#.156":{name:"석축쌓기(찰쌓기)",spec:"T=55cm이하",unit:"㎡",labor:45214,material:4476,expense:8534},
+  "#.158":{name:"전석쌓기",spec:"",unit:"㎡",labor:62551,material:6747,expense:9800},
+  "#.163":{name:"호안블럭붙이기",spec:"1.0x1.0(기계)",unit:"㎡",labor:7693,material:319,expense:1478},
+  "#.168":{name:"레미콘타설(인력운반)",spec:"무근구조물",unit:"㎥",labor:56891,material:1137,expense:0},
+  "#.171":{name:"레미콘타설(장비사용)",spec:"무근구조물",unit:"㎥",labor:22627,material:2611,expense:3360},
+  "#.172":{name:"레미콘타설(장비사용)",spec:"철근구조물",unit:"㎥",labor:25892,material:2982,expense:3837},
+  "#.184":{name:"레미콘타설(펌프차)",spec:"무근TYPE-Ⅰ",unit:"㎥",labor:10266,material:1682,expense:3118},
+  "#.186":{name:"레미콘타설(펌프차)",spec:"무근TYPE-Ⅲ",unit:"㎥",labor:17966,material:2944,expense:5457},
+  "#.192":{name:"레미콘타설(펌프차)",spec:"철근TYPE-Ⅰ",unit:"㎥",labor:12199,material:1825,expense:3243},
+  "#.194":{name:"레미콘타설(펌프차)",spec:"철근TYPE-Ⅲ",unit:"㎥",labor:21348,material:3195,expense:5676},
+  "#.201":{name:"합판거푸집(1회)",spec:"제물치장",unit:"㎡",labor:85188,material:37177,expense:0},
+  "#.204":{name:"합판거푸집(4회)",spec:"보통",unit:"㎡",labor:37861,material:14845,expense:0},
+  "#.205":{name:"합판거푸집(6회)",spec:"간단",unit:"㎡",labor:34075,material:13018,expense:0},
+  "#.216":{name:"철근가공 및 조립",spec:"TYPE-1-1",unit:"ton",labor:763584,material:46877,expense:0},
+  "#.275":{name:"콘크리트양생(피막)",spec:"E,CU6-8m2/ℓ",unit:"㎡",labor:339,material:445,expense:0},
+  "#.276":{name:"콘크리트양생(습윤)",spec:"습윤양생",unit:"㎡",labor:1426,material:472,expense:231},
+  "#.280":{name:"부직포설치",spec:"",unit:"㎡",labor:279,material:1693,expense:17},
+  "#.281":{name:"비닐깔기",spec:"",unit:"㎡",labor:32,material:647,expense:0},
+  "#.282":{name:"물푸기",spec:"",unit:"hr",labor:1139,material:2463,expense:635},
+  "#.320":{name:"표층아스콘포설및다짐",spec:"소규모포설",unit:"㎡",labor:6433,material:501,expense:389},
+  "#.325":{name:"절삭후아스팔트덧씌우기",spec:"A-Type",unit:"㎡",labor:1365,material:727,expense:820},
+  "#.327":{name:"절삭후아스팔트덧씌우기",spec:"C-Type",unit:"㎡",labor:3032,material:1108,expense:1457},
+  "#.331":{name:"아스팔트덧씌우기",spec:"소규모포장",unit:"㎡",labor:2245,material:328,expense:489},
+  "#.335":{name:"콘크리트포장(인력)",spec:"A-TYPE(T=20Cm)",unit:"㎡",labor:2823,material:732,expense:0},
+  "#.481":{name:"교통통제및안전처리",spec:"500M미만",unit:"일",labor:339608,material:0,expense:0},
+};
+
+function applyPrices(data) {
+  const cats = ['토공','구조물공','포장공','부대공'];
+  for (const cat of cats) {
+    if (!data.items[cat]) continue;
+    data.items[cat] = data.items[cat].map(item => {
+      const id = item.priceId || '';
+      const p = PRICE_DB[id];
+      if (p) {
+        return { ...item, name: p.name, spec: p.spec, unit: p.unit,
+          labor: p.labor, material: p.material, expense: p.expense,
+          priceSource: '2025 단가목록' };
+      }
+      return { ...item, priceSource: '⚠ 확인필요' };
+    });
+  }
+  return data;
+}
 
 export default async (req) => {
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'POST only' }), { status: 405 });
-  }
+  if (req.method !== 'POST') return new Response(JSON.stringify({error:'POST only'}),{status:405});
 
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_API_KEY) {
-    return new Response(JSON.stringify({ error: 'API 키가 설정되지 않았습니다. Netlify 환경변수에 ANTHROPIC_API_KEY를 추가하세요.' }), {
-      status: 500, headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(JSON.stringify({error:'ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.'}),
+      {status:500, headers:{'Content-Type':'application/json'}});
   }
 
   try {
     const body = await req.json();
     const { image, siteName, location } = body;
-    // image: base64 encoded image data (data URL에서 base64 부분만)
 
-    const systemPrompt = `당신은 30년 경력의 토목직 공무원이자 수해복구 설계 전문가입니다.
-하천 수해 현장 사진을 분석하여 아래 정보를 JSON 형식으로 반환하세요.
+    // 사용 가능한 단가ID 목록을 AI에게 전달
+    const priceList = Object.entries(PRICE_DB)
+      .map(([id,p]) => `${id} ${p.name} (${p.spec}) ${p.unit} 합계:${p.labor+p.material+p.expense}원`)
+      .join('\n');
 
-## 분석 규칙
-1. 좌/우안 판정: 사진에서 왼쪽이 피해지(도로/석축)면 좌안, 오른쪽이면 우안
-2. 복구 판정: 수충부, 사면붕괴, 기초세굴 등 구조적 취약점 → 무조건 "개선복구"
-3. 기초 근입: D=1.0m 이상 적용
-4. 물량 산출: 사진에서 관측되는 피해 규모를 최대한 정밀하게 추정
-5. 설계 수량: 여유폭 +0.5m, 매몰 +1.0m 반영
+    const systemPrompt = `당신은 30년 경력 토목직 공무원이자 수해복구 설계 전문가입니다.
+현장 사진을 분석하여 설계물량을 산출하세요.
 
-## 단가 적용 공종 목록 (2025년 충청북도 단가목록)
-- 표토제거(답구간) #.21: 429원/㎡
-- 흙깍기(보통토사,소규모) #.28: 2,993원/㎥
-- 구조물터파기(육상토사) #.57: 1,793원/㎥
-- 뒤채움(소형장비) #.68: 12,311원/㎥
-- 되메우기(소형장비) #.70: 10,416원/㎥
-- 사토운반(토사,L=5KM) #.127: 7,402원/㎥
-- 절토사면녹화(T=10cm) #.87: 55,486원/㎡
-- 기초지정(잡석) #.77: 11,737원/㎥
-- 레미콘타설(펌프차,무근,TYPE-Ⅲ) #.186: 26,367원/㎥
-- 레미콘타설(펌프차,철근,TYPE-Ⅲ) #.194: 30,219원/㎥
-- 석축쌓기(찰쌓기,T=35cm) #.155: 63,590원/㎡
-- 합판거푸집(4회,보통) #.204: 52,706원/㎡
-- 철근가공조립(TYPE-1-1) #.216: 810,461원/ton
-- 콘크리트양생(피막) #.275: 784원/㎡
-- 부직포설치 #.280: 1,989원/㎡
-- 비닐깔기 #.281: 679원/㎡
-- 물푸기 #.282: 4,237원/hr
-- 절삭후아스팔트덧씌우기(C-Type) #.327: 5,597원/㎡
-- 호안블럭붙이기 #.163: 9,490원/㎡
+## 핵심 규칙
+- 각 공종의 priceId는 반드시 아래 단가목록에서 선택하세요
+- 단가목록에 없는 공종은 가장 유사한 공종의 ID를 사용하세요
+- 수량(qty)은 철근(ton)은 소수점3자리, 기타는 소수점2자리로 산출
 
-## 관급/사급 자재
-- 관급: 레미콘 75,000원/㎥, 철근(SD400) 950,000원/ton, 석재 35,000원/㎡, 잡석 25,000원/㎥
-- 사급: 합판거푸집(자재) 14,845원/㎡, 부직포(자재) 1,693원/㎡
-- 관급수수료: 관급자재비 × 1.5%
+## 2025년 충청북도 단가목록 (priceId → 공종)
+${priceList}
 
-## 반환 JSON 형식
-반드시 아래 형식의 JSON만 반환하세요. 설명 텍스트 없이 JSON만 출력하세요.
+## 반환 JSON (반드시 이 형식만 출력, 설명 없이 JSON만)
 {
   "analysis": {
-    "riverBank": "좌안 또는 우안",
-    "cause": "피해 원인 설명",
+    "riverBank": "좌안/우안",
+    "cause": "원인설명",
     "judgement": "개선복구",
-    "damageLength": 숫자(m),
-    "damageHeight": 숫자(m),
-    "damageDescription": "피해 상황 상세 설명"
+    "damageLength": 숫자,
+    "damageHeight": 숫자,
+    "damageDescription": "상세설명"
   },
   "items": {
     "토공": [
-      { "name": "공종명", "priceKey": "단가목록 공종키", "qty": 수량, "unit": "단위", "note": "상세 산출근거 계산식" }
+      {"name":"공종명","priceId":"#.번호","qty":수량,"note":"산출근거 계산식"}
     ],
     "구조물공": [...],
     "포장공": [...],
@@ -75,17 +122,15 @@ export default async (req) => {
   },
   "materials": {
     "관급": [
-      { "name": "품목명", "spec": "규격", "unit": "단위", "qty": 수량, "unitPrice": 단가, "note": "산출근거" }
+      {"name":"레미콘","spec":"25-21-150","unit":"㎥","qty":수량,"unitPrice":75000,"note":"산출근거"}
     ],
-    "사급": [...]
+    "사급": [
+      {"name":"합판거푸집(자재)","spec":"합판+각재","unit":"㎡","qty":수량,"unitPrice":14845,"note":"산출근거"}
+    ]
   },
   "structure": {
-    "type": "구조형식 (예: 찰쌓기 석축)",
-    "foundation": "기초형식",
-    "embedDepth": "근입깊이 (예: D=1.0m)",
-    "concreteStrength": "21 MPa",
-    "slump": "80~120 mm",
-    "reinforcement": "철근량 (예: 100kg/㎥)"
+    "type":"구조형식","foundation":"기초형식","embedDepth":"근입깊이",
+    "concreteStrength":"콘크리트강도","slump":"슬럼프","reinforcement":"철근량"
   }
 }`;
 
@@ -103,18 +148,8 @@ export default async (req) => {
         messages: [{
           role: 'user',
           content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: 'image/jpeg',
-                data: image,
-              },
-            },
-            {
-              type: 'text',
-              text: `현장명: ${siteName || '미지정'}\n위치: ${location || '미지정'}\n\n이 하천 수해 현장 사진을 분석하여 피해 현황, 물량, 단가를 산출해 주세요. JSON만 반환하세요.`,
-            },
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } },
+            { type: 'text', text: `현장명: ${siteName||'미지정'}\n위치: ${location||'미지정'}\n\n사진 분석 후 설계물량을 JSON으로 반환하세요. priceId는 반드시 단가목록의 #.번호를 사용하세요.` },
           ],
         }],
       }),
@@ -122,34 +157,25 @@ export default async (req) => {
 
     if (!response.ok) {
       const errText = await response.text();
-      return new Response(JSON.stringify({ error: `Claude API 오류: ${response.status}`, detail: errText }), {
-        status: 500, headers: { 'Content-Type': 'application/json' }
-      });
+      return new Response(JSON.stringify({error:`Claude API 오류: ${response.status}`, detail:errText}),
+        {status:500, headers:{'Content-Type':'application/json'}});
     }
 
     const data = await response.json();
     const text = data.content.map(c => c.text || '').join('');
+    let jsonStr = text.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
 
-    // JSON 추출 (마크다운 코드블록 제거)
-    let jsonStr = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     let parsed;
-    try {
-      parsed = JSON.parse(jsonStr);
-    } catch (e) {
-      // JSON 파싱 실패 시 원본 텍스트 반환
-      return new Response(JSON.stringify({ error: 'JSON 파싱 실패', raw: text }), {
-        status: 200, headers: { 'Content-Type': 'application/json' }
-      });
-    }
+    try { parsed = JSON.parse(jsonStr); }
+    catch(e) { return new Response(JSON.stringify({error:'JSON 파싱 실패',raw:text}),
+      {status:200,headers:{'Content-Type':'application/json'}}); }
 
-    return new Response(JSON.stringify(parsed), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    // 서버에서 2025년 단가 강제 적용
+    const result = applyPrices(parsed);
 
-  } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500, headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(JSON.stringify(result),{headers:{'Content-Type':'application/json'}});
+  } catch(err) {
+    return new Response(JSON.stringify({error:err.message}),{status:500,headers:{'Content-Type':'application/json'}});
   }
 };
 
