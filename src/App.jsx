@@ -467,6 +467,27 @@ ${currentDamage || "(없음)"}
       add("4.","낙석방지망","철망설치(기계식)","m²",d.qty,"#.453");
     });
 
+    // 측구/배수/수로/관로
+    enabledDmg.filter(d=>d.item.match(/측구|배수|수로|산마루/)).forEach(d=>{
+      add("2.","레미콘타설(펌프차)","무근(S:8-12cm),TYPE-Ⅱ","m³",Math.round(d.qty*0.15*10)/10||1,"#.185");
+      add("2.","합판거푸집","(4회) 보통","m²",Math.round(d.qty*0.6)||10,"#.204");
+      add("1.","구조물터파기","육상토사,기계100%","m³",Math.round(d.qty*0.3)||5,"#.57");
+    });
+
+    // 플륨관/흄관
+    enabledDmg.filter(d=>d.item.match(/플륨|흄관|관로|파이프/)).forEach(d=>{
+      add("2.","플륨관설치",d.qty>20?"500~700kg":"300~500kg","m",d.qty,d.qty>20?"#.93":"#.92");
+    });
+
+    // ★ 매칭되지 않은 항목 → 직접입력 공종으로 추가 (빠뜨림 방지)
+    const matched = new Set();
+    enabledDmg.forEach(d=>{
+      if(d.item.match(/석축|옹벽|RC|역.*T|기초.*콘|콘크리트.*기초|잡석|포장|도로|아스팔트|사면|녹화|법면|낙석|측구|배수|수로|산마루|플륨|흄관|관로|파이프|굴착|사토|토사|잔해/i)) matched.add(d.id);
+    });
+    enabledDmg.filter(d=>!matched.has(d.id)).forEach(d=>{
+      add("4.",d.item,`피해현황 직접반영 (${d.basis||""})`,d.unit,d.qty,"");
+    });
+
     // items가 비어있거나, 피해현황 기반으로 새로 생성
     _nid=id+200;
     setItems(newItems);
