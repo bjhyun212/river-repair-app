@@ -1,31 +1,22 @@
-import { useState, useRef, Fragment } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 
 /* ============================================================
-   소규모주민숙원사업 v7.2
-   흐름: 사진업로드 → API분석 → 결과표시 → 편집 → 저장
-   - 처음 실행: 사진 업로드 화면만
-   - 사진 업로드: Netlify Function 호출 → AI 분석
-   - 분석 완료: AI분석 ↔ 설계내역서 전환
-   - 새 작업: 전체 초기화
+   소규모주민숙원사업 종합검토보고서 v7.2
+   수정사항 3건:
+   ① 체크박스 전체선택/해제 기능
+   ② 엑셀 3종 브라우저 직접 생성 (SheetJS, 서버 불필요)
+   ③ 피해현황 설계물량 ↔ 내역서 물량 연동
    ============================================================ */
 
 const fmt = (n) => (n ?? 0).toLocaleString("ko-KR");
-
-// ═══════════════ 빈 초기 데이터 ═══════════════
-const emptyItems = [];
-const emptySagub = [];
-const emptyGwangub = [];
-const emptyDamage = [];
-const emptyStruct = {
-  wallHeight: 0, wallLength: 0, wallThickness: 0,
-  foundWidth: 0, foundDepth: 0, japseokThickness: 0,
-  backfillWidth: 0, backfillDepth: 0,
-  roadWidth: 0, roadThickness: 0,
+const fmtDec = (n, unit) => {
+  if (unit === "ton" || unit === "톤") return (n ?? 0).toFixed(3);
+  return (n ?? 0).toFixed(2);
 };
 
-// ═══════════════ 2025 단가 DB (서버 매칭용) ═══════════════
+/* ========== 2025 충청북도 단가 DB ========== */
 const PRICE_DB = {
-  "#.22": { name:"표토제거", spec:"T=20CM, 굴삭기0.7㎥", unit:"m²", labor:191, material:59, expense:80, total:330 },
+  "#.22": { name:"표토제거", spec:"T=20CM, 굴삭기0.7㎥(답외)", unit:"m²", labor:191, material:59, expense:80, total:330 },
   "#.28": { name:"흙깍기", spec:"보통토사,소규모,굴착기1.0㎥", unit:"m³", labor:1472, material:774, expense:747, total:2993 },
   "#.57": { name:"구조물터파기", spec:"육상토사,기계100%", unit:"m³", labor:1035, material:323, expense:435, total:1793 },
   "#.68": { name:"뒤채움 및 다짐", spec:"소형장비", unit:"m³", labor:9507, material:1337, expense:1467, total:12311 },
@@ -34,6 +25,7 @@ const PRICE_DB = {
   "#.87": { name:"절토사면 녹화", spec:"T=10㎝", unit:"m²", labor:28320, material:22842, expense:4324, total:55486 },
   "#.127":{ name:"사토운반", spec:"토사,L=5.0KM", unit:"m³", labor:4001, material:1876, expense:1525, total:7402 },
   "#.155":{ name:"석축쌓기", spec:"찰쌓기,T=35cm이하", unit:"m²", labor:50146, material:4625, expense:8819, total:63590 },
+  "#.172":{ name:"레미콘타설(장비)", spec:"철근구조물", unit:"m³", labor:25892, material:2982, expense:3837, total:32711 },
   "#.193":{ name:"레미콘타설(펌프차)", spec:"철근(S:8-12cm),TYPE-Ⅱ", unit:"m³", labor:17078, material:2556, expense:4540, total:24174 },
   "#.204":{ name:"합판거푸집", spec:"(4회) 보통", unit:"m²", labor:37861, material:14845, expense:0, total:52706 },
   "#.216":{ name:"철근가공 및 조립", spec:"TYPE-1-1", unit:"ton", labor:763584, material:46877, expense:0, total:810461 },
@@ -41,617 +33,854 @@ const PRICE_DB = {
   "#.280":{ name:"부직포설치", spec:"", unit:"m²", labor:279, material:1693, expense:17, total:1989 },
   "#.281":{ name:"비닐깔기", spec:"", unit:"m²", labor:32, material:647, expense:0, total:679 },
   "#.282":{ name:"물푸기", spec:"", unit:"hr", labor:1139, material:2463, expense:635, total:4237 },
-  "#.326":{ name:"아스팔트 절삭후 덧씌우기", spec:"B-Type(1회절삭,1회포장)", unit:"m²", labor:1873, material:919, expense:1189, total:3981 },
+  "#.326":{ name:"절삭후아스팔트덧씌우기", spec:"B-Type(1회절삭,1회포장)", unit:"m²", labor:1873, material:919, expense:1189, total:3981 },
 };
 
-// ═══════════════ 계산 함수 ═══════════════
-function calcTotals(items, sagub, gwangub) {
-  const enabled = items.filter(i => i.enabled);
-  const cats = { "1.":0,"2.":0,"3.":0,"4.":0 };
-  const catsLabor = { "1.":0,"2.":0,"3.":0,"4.":0 };
-  const catsMat = { "1.":0,"2.":0,"3.":0,"4.":0 };
-  const catsExp = { "1.":0,"2.":0,"3.":0,"4.":0 };
-  enabled.forEach(i => {
-    cats[i.cat] = (cats[i.cat]||0) + Math.round(i.qty * i.total);
-    catsLabor[i.cat] = (catsLabor[i.cat]||0) + Math.round(i.qty * i.labor);
-    catsMat[i.cat] = (catsMat[i.cat]||0) + Math.round(i.qty * i.material);
-    catsExp[i.cat] = (catsExp[i.cat]||0) + Math.round(i.qty * i.expense);
+/* ========== 기본 설계 항목 ========== */
+const makeDefaultItems = () => [
+  { id:1, cat:"1.", catName:"토공", name:"표토제거", spec:"T=20CM, 굴삭기0.7㎥(답외)", unit:"m²", qty:35, priceId:"#.22", enabled:true },
+  { id:2, cat:"1.", catName:"토공", name:"흙깍기", spec:"보통토사,소규모", unit:"m³", qty:40, priceId:"#.28", enabled:true },
+  { id:3, cat:"1.", catName:"토공", name:"구조물터파기", spec:"육상토사,기계100%", unit:"m³", qty:51, priceId:"#.57", enabled:true },
+  { id:4, cat:"2.", catName:"구조물공", name:"기초지정(잡석)", spec:"잡석", unit:"m³", qty:26, priceId:"#.77", enabled:true },
+  { id:5, cat:"2.", catName:"구조물공", name:"레미콘타설(펌프차)", spec:"철근(S:8-12cm),TYPE-Ⅱ", unit:"m³", qty:51, priceId:"#.193", enabled:true },
+  { id:6, cat:"2.", catName:"구조물공", name:"석축쌓기", spec:"찰쌓기,T=35cm이하", unit:"m²", qty:51, priceId:"#.155", enabled:true },
+  { id:7, cat:"2.", catName:"구조물공", name:"합판거푸집", spec:"(4회) 보통", unit:"m²", qty:41, priceId:"#.204", enabled:true },
+  { id:8, cat:"2.", catName:"구조물공", name:"철근가공 및 조립", spec:"TYPE-1-1", unit:"ton", qty:2.6, priceId:"#.216", enabled:true },
+  { id:9, cat:"2.", catName:"구조물공", name:"콘크리트양생", spec:"습윤양생", unit:"m²", qty:92, priceId:"#.276", enabled:true },
+  { id:10,cat:"4.", catName:"부대공", name:"부직포설치", spec:"", unit:"m²", qty:72, priceId:"#.280", enabled:true },
+  { id:11,cat:"4.", catName:"부대공", name:"비닐깔기", spec:"", unit:"m²", qty:51, priceId:"#.281", enabled:true },
+  { id:12,cat:"1.", catName:"토공", name:"뒤채움 및 다짐", spec:"소형장비", unit:"m³", qty:35, priceId:"#.68", enabled:true },
+  { id:13,cat:"1.", catName:"토공", name:"되메우기 및 다짐", spec:"소형장비", unit:"m³", qty:20, priceId:"#.70", enabled:true },
+  { id:14,cat:"1.", catName:"토공", name:"절토사면 녹화", spec:"T=10㎝", unit:"m²", qty:45, priceId:"#.87", enabled:true },
+  { id:15,cat:"1.", catName:"토공", name:"사토운반", spec:"토사,L=5.0KM", unit:"m³", qty:40, priceId:"#.127", enabled:true },
+  { id:16,cat:"4.", catName:"부대공", name:"물푸기", spec:"", unit:"hr", qty:24, priceId:"#.282", enabled:true },
+  { id:17,cat:"3.", catName:"포장공", name:"절삭후아스팔트덧씌우기", spec:"B-Type(1회절삭,1회포장)", unit:"m²", qty:40, priceId:"#.326", enabled:true },
+];
+
+/* ========== 사급/관급 기본 데이터 ========== */
+const makeSagubItems = () => [
+  { id:101, name:"합판거푸집(자재)", spec:"합판,유로폼 등", unit:"m²", qty:41, unitPrice:12000 },
+  { id:102, name:"부직포(자재)", spec:"부직포 원단", unit:"m²", qty:72, unitPrice:1500 },
+];
+const makeGwangubItems = () => [
+  { id:201, sub:"6.1", name:"레미콘", spec:"25-210-12, S=12cm", unit:"m³", qty:51, unitPrice:75000 },
+  { id:202, sub:"6.2", name:"이형철근(SD400)", spec:"HD13", unit:"ton", qty:2.6, unitPrice:950000 },
+  { id:203, sub:"6.3", name:"석재", spec:"자연석,석축용", unit:"m²", qty:51, unitPrice:45000 },
+  { id:204, sub:"6.3", name:"잡석", spec:"기초지정용", unit:"m³", qty:26, unitPrice:18000 },
+];
+
+const FEE_RATE = 0.015;
+
+/* ========== 피해현황 기본 데이터 ========== */
+const makeDefaultDamage = () => [
+  { id:1, item:"석축 붕괴", basis:"붕괴 연장 약 20m × 높이 약 2.5m", qty:50, unit:"㎡", enabled:true },
+  { id:2, item:"도로 포장 파손", basis:"파손 연장 약 20m × 폭 약 2.0m", qty:40, unit:"㎡", enabled:true },
+  { id:3, item:"기초 세굴", basis:"세굴 연장 약 20m × 폭 2.5m × 깊이 1.0m", qty:50, unit:"㎥", enabled:true },
+  { id:4, item:"토사 퇴적/유실", basis:"하천 내 토석 퇴적 및 사면 유실", qty:80, unit:"㎥", enabled:true },
+  { id:5, item:"매설관 노출", basis:"노출 연장 약 15m (φ200~300mm 추정)", qty:15, unit:"m", enabled:true },
+  { id:6, item:"사면 붕괴", basis:"도로 상부 사면 붕괴 면적", qty:30, unit:"㎡", enabled:true },
+];
+
+/* ========== 피해현황 → 설계물량 매핑 규칙 ========== */
+// 피해현황 물량이 변경되면, 관련 설계항목의 수량도 자동 연동
+const DAMAGE_TO_DESIGN_MAP = {
+  // 피해현황 id → [{ designId, factor, addOffset }]
+  1: [{ designId: 6, factor: 1.02, addOffset: 0 }],   // 석축붕괴 50㎡ → 석축쌓기 51㎡ (여유 2%)
+  2: [{ designId: 17, factor: 1.0, addOffset: 0 }],    // 도로파손 40㎡ → 아스팔트 40㎡
+  3: [{ designId: 3, factor: 1.02, addOffset: 0 },     // 기초세굴 → 구조물터파기
+      { designId: 5, factor: 1.02, addOffset: 0 }],    // 기초세굴 → 레미콘타설
+  4: [{ designId: 15, factor: 0.5, addOffset: 0 }],    // 토사 80㎥ → 사토운반 40㎥
+  6: [{ designId: 14, factor: 1.5, addOffset: 0 }],    // 사면붕괴 30㎡ → 녹화 45㎡
+};
+
+/* ============================================================
+   Excel Generation (Browser-side, SheetJS via CDN)
+   ============================================================ */
+
+// SheetJS CDN 로드 함수
+const loadSheetJS = () => {
+  return new Promise((resolve, reject) => {
+    if (window.XLSX) { resolve(window.XLSX); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";
+    s.onload = () => resolve(window.XLSX);
+    s.onerror = () => reject(new Error("SheetJS 로드 실패"));
+    document.head.appendChild(s);
   });
-  const directTotal = Object.values(cats).reduce((a,b)=>a+b,0);
-  const sagubTotal = sagub.filter(s=>s.enabled).reduce((a,s)=>a+Math.round(s.qty*s.unitPrice),0);
-  const gwangubTotal = gwangub.filter(g=>g.enabled).reduce((a,g)=>a+Math.round(g.qty*g.unitPrice),0);
-  const gwangubFee = Math.round(gwangubTotal*0.015);
-  const grandTotal = directTotal+sagubTotal+gwangubTotal+gwangubFee;
-  return { cats,catsLabor,catsMat,catsExp,directTotal,sagubTotal,gwangubTotal,gwangubFee,grandTotal };
+};
+
+// 설계내역서 엑셀 생성
+async function generateDesignExcel(items, sagub, gwangub, feeRate) {
+  const XLSX = await loadSheetJS();
+  const wb = XLSX.utils.book_new();
+
+  // 시트1: 내역서
+  const activeItems = items.filter(i => i.enabled);
+  const cats = ["1.","2.","3.","4."];
+  const catNames = { "1.":"토공","2.":"구조물공","3.":"포장공","4.":"부대공" };
+
+  const rows = [];
+  rows.push(["설 계 내 역 서 (소규모주민숙원사업)","","","","","","","","","","","","",""]);
+  rows.push(["단가근거: 2025년 충청북도 일위대가 목록표","","","","","","","","","","","","",""]);
+  rows.push(["공종","품 명","규 격","수량","단위","합계 단가","합계 금액","노무비 단가","노무비 금액","재료비 단가","재료비 금액","경비 단가","경비 금액"]);
+
+  let catTotals = {};
+  cats.forEach(c => { catTotals[c] = { g:0, i:0, k:0, m:0 }; });
+
+  // 대분류별 항목 정리
+  cats.forEach(catCode => {
+    const catItems = activeItems.filter(i => i.cat === catCode);
+    if (catItems.length === 0) return;
+    rows.push([catCode, catNames[catCode],"","","","","","","","","","","",""]);
+    catItems.forEach(item => {
+      const p = PRICE_DB[item.priceId] || {};
+      const totalU = p.total||0, laborU = p.labor||0, matU = p.material||0, expU = p.expense||0;
+      const q = item.qty;
+      const gAmt = Math.round(q*totalU);
+      const iAmt = Math.round(q*laborU);
+      const kAmt = Math.round(q*matU);
+      const mAmt = Math.round(q*expU);
+      catTotals[catCode].g += gAmt;
+      catTotals[catCode].i += iAmt;
+      catTotals[catCode].k += kAmt;
+      catTotals[catCode].m += mAmt;
+      rows.push(["", item.name, item.spec||"", q, item.unit, totalU, gAmt, laborU, iAmt, matU, kAmt, expU, mAmt]);
+    });
+  });
+
+  // 순공사비
+  const sunG = cats.reduce((s,c) => s+(catTotals[c]?.g||0), 0);
+  const sunI = cats.reduce((s,c) => s+(catTotals[c]?.i||0), 0);
+  const sunK = cats.reduce((s,c) => s+(catTotals[c]?.k||0), 0);
+  const sunM = cats.reduce((s,c) => s+(catTotals[c]?.m||0), 0);
+  rows.push(["","순 공 사 비","","","","",sunG,"",sunI,"",sunK,"",sunM]);
+
+  // 사급
+  const sagubTotal = sagub.reduce((s,i) => s+Math.round(i.qty*i.unitPrice), 0);
+  rows.push(["5.","사급자재대","","","","",sagubTotal,"","","","","",""]);
+  sagub.forEach(item => {
+    rows.push(["", item.name, item.spec, item.qty, item.unit, item.unitPrice, Math.round(item.qty*item.unitPrice),"","","","","",""]);
+  });
+
+  // 관급
+  const gwangubTotal = gwangub.reduce((s,i) => s+Math.round(i.qty*i.unitPrice), 0);
+  rows.push(["6.","관급자재대","","","","",gwangubTotal,"","","","","",""]);
+  gwangub.forEach(item => {
+    rows.push(["", item.name, item.spec, item.qty, item.unit, item.unitPrice, Math.round(item.qty*item.unitPrice),"","","","","",""]);
+  });
+
+  // 관급수수료
+  const fee = Math.round(gwangubTotal * feeRate);
+  rows.push(["","관급수수료 (1.5%)","","","","",fee,"","","","","",""]);
+
+  // 총공사비
+  const grand = sunG + sagubTotal + gwangubTotal + fee;
+  rows.push(["","총 공 사 비","","","","",grand,"","","","","",""]);
+
+  const ws1 = XLSX.utils.aoa_to_sheet(rows);
+  ws1["!cols"] = [{wch:8},{wch:24},{wch:28},{wch:8},{wch:6},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14}];
+  XLSX.utils.book_append_sheet(wb, ws1, "내역서");
+
+  // 시트2: 사급·관급 산출근거
+  const rows2 = [];
+  rows2.push(["사급·관급자재 산출근거","","","","","","","",""]);
+  rows2.push(["No","품명","규격","수량","단위","자재단가","자재금액","산출근거","구분"]);
+  rows2.push(["[ 사급자재 ]","","","","","","","",""]);
+  sagub.forEach((item,i) => {
+    rows2.push([i+1, item.name, item.spec, item.qty, item.unit, item.unitPrice, Math.round(item.qty*item.unitPrice), `${item.qty}${item.unit} × ${fmt(item.unitPrice)}원`, "사급"]);
+  });
+  rows2.push(["","사급자재 소계","","","","",sagubTotal,"",""]);
+  rows2.push([]);
+  rows2.push(["[ 관급자재 ]","","","","","","","",""]);
+  gwangub.forEach((item,i) => {
+    rows2.push([i+1, item.name, item.spec, item.qty, item.unit, item.unitPrice, Math.round(item.qty*item.unitPrice), `${item.qty}${item.unit} × ${fmt(item.unitPrice)}원`, "관급"]);
+  });
+  rows2.push(["","관급자재 소계","","","","",gwangubTotal,"",""]);
+  rows2.push(["","관급수수료 (1.5%)","","","","",fee,`${fmt(gwangubTotal)} × 1.5%`,""]);
+  rows2.push([]);
+  rows2.push(["","사급+관급+수수료 합계","","","","",sagubTotal+gwangubTotal+fee,"",""]);
+
+  const ws2 = XLSX.utils.aoa_to_sheet(rows2);
+  ws2["!cols"] = [{wch:5},{wch:20},{wch:25},{wch:10},{wch:6},{wch:14},{wch:14},{wch:65},{wch:22}];
+  XLSX.utils.book_append_sheet(wb, ws2, "사급관급자재");
+
+  XLSX.writeFile(wb, `설계내역서_소규모주민숙원_${new Date().toISOString().slice(0,10).replace(/-/g,"")}.xlsx`);
 }
 
-// ═══════════════ SVG 단면도 ═══════════════
-function CrossSectionSVG({ specs }) {
-  const { wallHeight, wallThickness, foundWidth, foundDepth, japseokThickness, backfillWidth, roadWidth } = specs;
-  if (!wallHeight || !foundWidth) return <div className="text-center text-slate-400 py-10 text-sm">구조물 제원을 입력하면 단면도가 생성됩니다.</div>;
-  const svgW=600,svgH=400,scale=60,ox=120,oy=280;
-  const fw=foundWidth*scale,fd=foundDepth*scale,jt=japseokThickness*scale;
-  const wh=wallHeight*scale,wt=wallThickness*scale,bw=backfillWidth*scale;
-  const rw=roadWidth*scale,rt=5;
-  const groundY=oy,japBot=groundY+jt,foundBot=japBot+fd;
-  const wallTop=groundY-wh,wallRight=ox+wt;
-  const dim=(x1,y1,x2,y2,label,side="left")=>{
-    const isVert=Math.abs(x1-x2)<2;
-    if(isVert){const xOff=side==="left"?-35:25;return(<g key={label}><line x1={x1+xOff} y1={y1} x2={x1+xOff} y2={y2} stroke="#DC2626" strokeWidth="0.8" markerStart="url(#au)" markerEnd="url(#ad)"/><line x1={x1+xOff-5} y1={y1} x2={x1+xOff+5} y2={y1} stroke="#DC2626" strokeWidth="0.5"/><line x1={x1+xOff-5} y1={y2} x2={x1+xOff+5} y2={y2} stroke="#DC2626" strokeWidth="0.5"/><text x={x1+xOff-8} y={(y1+y2)/2+3} fill="#DC2626" fontSize="9" textAnchor="end" fontWeight="600">{label}</text></g>);}
-    const yOff=side==="top"?-12:15;return(<g key={label}><line x1={x1} y1={y1+yOff} x2={x2} y2={y1+yOff} stroke="#2563EB" strokeWidth="0.8" markerStart="url(#al)" markerEnd="url(#ar)"/><line x1={x1} y1={y1+yOff-5} x2={x1} y2={y1+yOff+5} stroke="#2563EB" strokeWidth="0.5"/><line x1={x2} y1={y1+yOff-5} x2={x2} y2={y1+yOff+5} stroke="#2563EB" strokeWidth="0.5"/><text x={(x1+x2)/2} y={y1+yOff-3} fill="#2563EB" fontSize="9" textAnchor="middle" fontWeight="600">{label}</text></g>);
-  };
-  return (
-    <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full border border-slate-200 rounded-lg bg-white" style={{maxHeight:420}}>
-      <defs>
-        <marker id="au" markerWidth="6" markerHeight="6" refX="3" refY="6" orient="auto"><path d="M0,6 L3,0 L6,6" fill="#DC2626"/></marker>
-        <marker id="ad" markerWidth="6" markerHeight="6" refX="3" refY="0" orient="auto"><path d="M0,0 L3,6 L6,0" fill="#DC2626"/></marker>
-        <marker id="al" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M6,0 L0,3 L6,6" fill="#2563EB"/></marker>
-        <marker id="ar" markerWidth="6" markerHeight="6" refX="0" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#2563EB"/></marker>
-        <pattern id="gravel" width="10" height="10" patternUnits="userSpaceOnUse"><circle cx="3" cy="3" r="2" fill="none" stroke="#A8A29E" strokeWidth="0.6"/><circle cx="8" cy="7" r="1.5" fill="none" stroke="#A8A29E" strokeWidth="0.6"/></pattern>
-        <pattern id="dots" width="8" height="8" patternUnits="userSpaceOnUse"><circle cx="4" cy="4" r="1.2" fill="#CBD5E1"/></pattern>
-      </defs>
-      <text x={svgW/2} y="22" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#1E3A5F">설계 표준 단면도</text>
-      <text x={svgW/2} y="37" textAnchor="middle" fontSize="9" fill="#64748B">석축 찰쌓기 + 기초 콘크리트 + 잡석기초</text>
-      <line x1="30" y1={groundY} x2={svgW-30} y2={groundY} stroke="#78716C" strokeWidth="1.5" strokeDasharray="8,3"/>
-      <text x="40" y={groundY-5} fontSize="9" fill="#78716C" fontWeight="600">G.L</text>
-      <rect x="30" y={groundY+5} width={ox-40} height={30} fill="#DBEAFE" opacity="0.5" rx="2"/>
-      <text x={(30+ox-10)/2} y={groundY+24} fontSize="8" fill="#3B82F6" textAnchor="middle">하천수면</text>
-      <rect x={ox-10} y={groundY} width={fw+20} height={jt} fill="url(#gravel)" stroke="#78716C" strokeWidth="1"/>
-      <text x={ox+fw/2} y={groundY+jt/2+3} fontSize="8" fill="#57534E" textAnchor="middle" fontWeight="500">잡석기초</text>
-      <rect x={ox-5} y={japBot} width={fw+10} height={fd} fill="#E2E8F0" stroke="#475569" strokeWidth="1.2"/>
-      <text x={ox+fw/2} y={japBot+fd/2+3} fontSize="8" fill="#334155" textAnchor="middle" fontWeight="600">기초 콘크리트</text>
-      <rect x={ox} y={wallTop} width={wt} height={wh} fill="#D6D3D1" stroke="#57534E" strokeWidth="1.5"/>
-      <text x={ox+wt/2} y={wallTop+wh/2} fontSize="8" fill="#44403C" textAnchor="middle" fontWeight="600" transform={`rotate(-90,${ox+wt/2},${wallTop+wh/2})`}>석축 찰쌓기</text>
-      <rect x={wallRight} y={wallTop} width={bw} height={wh} fill="url(#dots)" stroke="#78716C" strokeWidth="0.8"/>
-      <text x={wallRight+bw/2} y={wallTop+wh/2+3} fontSize="7" fill="#57534E" textAnchor="middle">뒤채움</text>
-      <line x1={wallRight} y1={wallTop} x2={wallRight} y2={groundY} stroke="#7C3AED" strokeWidth="2.5" strokeDasharray="4,2"/>
-      <rect x={wallRight+bw-5} y={wallTop-rt} width={rw} height={rt} fill="#1F2937" stroke="#111827" strokeWidth="0.8"/>
-      <text x={wallRight+bw+rw/2-5} y={wallTop-rt-4} fontSize="7" fill="#374151" textAnchor="middle">도로 (As포장)</text>
-      {dim(ox,wallTop,ox,groundY,`H=${wallHeight}m`,"left")}
-      {dim(ox-5,groundY,ox-5,groundY+jt,`${japseokThickness}m`,"left")}
-      {dim(ox-5,japBot,ox-5,foundBot,`D=${foundDepth}m`,"left")}
-      {dim(ox,groundY,ox+fw,groundY,`B=${foundWidth}m`,"top")}
-      {dim(ox,wallTop,wallRight,wallTop,`T=${wallThickness}m`,"top")}
-      {dim(wallRight,wallTop,wallRight+bw,wallTop,`${backfillWidth}m`,"top")}
-      <g transform="translate(420,55)"><rect width="155" height="88" fill="white" stroke="#E2E8F0" rx="4"/><text x="8" y="15" fontSize="8" fontWeight="bold" fill="#334155">범 례</text><rect x="8" y="22" width="14" height="8" fill="#D6D3D1" stroke="#57534E" strokeWidth="0.5"/><text x="26" y="29" fontSize="7" fill="#475569">석축 찰쌓기</text><rect x="8" y="34" width="14" height="8" fill="#E2E8F0" stroke="#475569" strokeWidth="0.5"/><text x="26" y="41" fontSize="7" fill="#475569">기초 콘크리트</text><rect x="8" y="46" width="14" height="8" fill="url(#gravel)" stroke="#78716C" strokeWidth="0.5"/><text x="26" y="53" fontSize="7" fill="#475569">잡석기초</text><rect x="8" y="58" width="14" height="8" fill="url(#dots)" stroke="#78716C" strokeWidth="0.5"/><text x="26" y="65" fontSize="7" fill="#475569">뒤채움</text><line x1="8" y1="74" x2="22" y2="74" stroke="#7C3AED" strokeWidth="2.5" strokeDasharray="4,2"/><text x="26" y="77" fontSize="7" fill="#475569">부직포</text></g>
-    </svg>
-  );
+// 수량산출서 엑셀 생성
+async function generateQuantityExcel(items, sagub, gwangub, feeRate) {
+  const XLSX = await loadSheetJS();
+  const wb = XLSX.utils.book_new();
+  const activeItems = items.filter(i => i.enabled);
+
+  const rows = [];
+  rows.push(["수 량 산 출 서 (소규모주민숙원사업)","","","","","","",""]);
+  rows.push(["번호","공종명(ID)","규격","단위","자재구분","산출근거","수량","비고"]);
+
+  activeItems.forEach((item, i) => {
+    const p = PRICE_DB[item.priceId] || {};
+    let matType = "해당없음";
+    if (["기초지정(잡석)","레미콘타설(펌프차)","석축쌓기","철근가공 및 조립"].some(n => item.name.includes(n.split("(")[0]))) matType = "관급";
+    if (["합판거푸집","부직포설치"].some(n => item.name.includes(n))) matType = "사급";
+    rows.push([i+1, item.name, item.spec||"", item.unit, matType, `설계수량 ${fmtDec(item.qty, item.unit)}${item.unit}`, item.qty, item.priceId]);
+  });
+
+  // 관급수수료 행
+  const gwangubTotal = gwangub.reduce((s,i) => s+Math.round(i.qty*i.unitPrice), 0);
+  const fee = Math.round(gwangubTotal * feeRate);
+  rows.push([activeItems.length+1, "관급수수료", "관급자재비×1.5%", "식", "관급", `관급자재비 ${fmt(gwangubTotal)}원 × 1.5% = ${fmt(fee)}원`, 1, ""]);
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [{wch:7},{wch:20},{wch:25},{wch:7},{wch:12},{wch:65},{wch:10},{wch:25}];
+  XLSX.utils.book_append_sheet(wb, ws, "수량산출서");
+
+  XLSX.writeFile(wb, `수량산출서_소규모주민숙원_${new Date().toISOString().slice(0,10).replace(/-/g,"")}.xlsx`);
 }
 
-// ═══════════════ 공통 UI ═══════════════
-function SectionTitle({num,title}){return(<div className="flex items-center gap-3 mb-4"><div className="w-8 h-8 bg-blue-600 rounded-md flex items-center justify-center text-white font-bold text-sm">{num}</div><h2 className="text-lg font-bold text-slate-800">{title}</h2></div>);}
-function InfoCard({title,color,children}){const s=color==="blue"?{bg:"bg-blue-50",border:"border-blue-200",txt:"text-blue-700"}:{bg:"bg-red-50",border:"border-red-200",txt:"text-red-700"};return(<div className={`${s.bg} border ${s.border} rounded-lg p-5`}><h4 className={`font-bold ${s.txt} text-sm mb-3`}>{title}</h4><div className="space-y-2">{children}</div></div>);}
-function InfoRow({label,value,highlight}){return(<div className="flex justify-between text-sm"><span className="text-slate-500">{label}</span><span className={highlight?"font-bold text-red-600":"font-medium text-slate-800"}>{value}</span></div>);}
-function SumCard({label,value,color,bold}){const c={blue:"bg-blue-50 border-blue-200 text-blue-700",orange:"bg-orange-50 border-orange-200 text-orange-600",red:"bg-red-50 border-red-200 text-red-600",pink:"bg-pink-50 border-pink-200 text-pink-600",slate:"bg-slate-800 border-slate-700 text-white"};return(<div className={`rounded-lg border p-3 ${c[color]}`}><p className="text-xs opacity-75">{label}</p><p className={`${bold?"text-lg":"text-sm"} font-bold mt-1`}>{fmt(value)}원</p></div>);}
-function StructCard({title,specs,color}){const c={blue:{bg:"bg-blue-50",border:"border-blue-200",title:"text-blue-700",dot:"bg-blue-400"},red:{bg:"bg-red-50",border:"border-red-200",title:"text-red-700",dot:"bg-red-400"},amber:{bg:"bg-amber-50",border:"border-amber-200",title:"text-amber-700",dot:"bg-amber-400"}}[color];return(<div className={`${c.bg} border ${c.border} rounded-lg p-5`}><h4 className={`font-bold ${c.title} text-sm mb-4`}>{title}</h4><div className="space-y-2.5">{specs.map((s,i)=>(<div key={i} className="flex items-start gap-2 text-sm"><span className={`${c.dot} w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0`}/><span className="text-slate-500 w-16 flex-shrink-0">{s.k}</span><span className="font-medium text-slate-800">{s.v}</span></div>))}</div></div>);}
+// 일위대가 엑셀 생성
+async function generateUnitPriceExcel(items) {
+  const XLSX = await loadSheetJS();
+  const wb = XLSX.utils.book_new();
+  const activeItems = items.filter(i => i.enabled);
 
-function ExcelButton({ label, endpoint, items, sagub, gwangub, totals }) {
-  const [loading, setLoading] = useState(false);
-  const handleDownload = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/.netlify/functions/${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, sagub, gwangub, totals }),
-      });
-      if (!res.ok) throw new Error(`서버 오류: ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const names = { "generate-excel":"설계내역서", "generate-quantity":"수량산출서", "generate-unitprice":"일위대가" };
-      a.download = `${names[endpoint]||endpoint}_${new Date().toISOString().slice(0,10)}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      alert(`엑셀 생성 실패: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-  return (
-    <button onClick={handleDownload} disabled={loading} className={`px-4 py-2 text-sm rounded-lg font-medium transition ${loading ? "bg-slate-300 text-slate-500 cursor-wait" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>
-      {loading ? "생성중..." : label}
-    </button>
-  );
+  const usedPriceIds = [...new Set(activeItems.map(i => i.priceId))];
+  const rows = [];
+  rows.push(["일위대가 단가목록 (2025년 충청북도)","","","","","","","",""]);
+  rows.push(["단가ID","공종명","규격","합계","노무비","재료비","경비","자재구분","비고"]);
+
+  usedPriceIds.forEach(pid => {
+    const p = PRICE_DB[pid];
+    if (!p) return;
+    let matType = "해당없음";
+    if (["기초지정","레미콘","석축","철근"].some(n => p.name.includes(n))) matType = "관급(자재별도)";
+    if (["합판거푸집","부직포"].some(n => p.name.includes(n))) matType = "사급(자재별도)";
+    rows.push([pid, p.name, p.spec, p.total, p.labor, p.material, p.expense, matType, ""]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [{wch:10},{wch:25},{wch:30},{wch:14},{wch:14},{wch:14},{wch:14},{wch:12},{wch:20}];
+  XLSX.utils.book_append_sheet(wb, ws, "일위대가");
+
+  XLSX.writeFile(wb, `일위대가_단가목록_소규모주민숙원_${new Date().toISOString().slice(0,10).replace(/-/g,"")}.xlsx`);
 }
 
-// ═══════════════ AI 분석 화면 ═══════════════
-function AnalysisView({totals,structSpecs,setStructSpecs,editMode,damageItems,setDamageItems,analysisResult,imagePreview,imageInputRef,handleImageUpload,onImageClick}){
-  const toggleDamage=(id)=>setDamageItems(p=>p.map(d=>d.id===id?{...d,enabled:!d.enabled}:d));
-  const updateDamage=(id,field,val)=>setDamageItems(p=>p.map(d=>d.id!==id?d:{...d,[field]:field==="qty"?parseFloat(val)||0:val}));
-  const addDamage=()=>{const mx=Math.max(...damageItems.map(d=>d.id),0);setDamageItems(p=>[...p,{id:mx+1,name:"새 항목",basis:"",qty:0,unit:"㎡",enabled:true}]);};
-  const ar = analysisResult || {};
-  return (
-    <div className="space-y-6">
-      {/* 현장 사진 */}
-      {imagePreview && imagePreview !== "loaded" && (
-      <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-        <SectionTitle num="0" title="현장 사진" />
-        <div className="relative cursor-pointer group mt-4" onClick={onImageClick}>
-          <img src={imagePreview} alt="현장사진" className="w-full max-h-80 object-contain rounded-lg border border-slate-200" />
-          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all rounded-lg flex items-center justify-center">
-            <span className="opacity-0 group-hover:opacity-100 text-white text-sm font-medium bg-black/50 px-3 py-1.5 rounded-lg">🔍 클릭하여 확대</span>
-          </div>
-        </div>
-        {editMode && <div className="mt-3"><button onClick={()=>imageInputRef.current?.click()} className="px-3 py-1.5 bg-slate-200 text-slate-700 text-xs rounded-lg hover:bg-slate-300 font-medium">📷 사진 변경</button><input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden"/></div>}
-      </section>
-      )}
-
-      {/* 종합 분석 */}
-      <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-        <SectionTitle num="1" title="종합 분석" />
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
-          <InfoCard title="현장 제원" color="blue">
-            <InfoRow label="피해 위치" value={ar.bankSide||"-"} />
-            <InfoRow label="피해 연장" value={ar.damageLength||"-"} />
-            <InfoRow label="구조물 높이" value={ar.wallHeight||"-"} />
-            <InfoRow label="기초 세굴 깊이" value={ar.scourDepth||"-"} />
-            <InfoRow label="도로 파손" value={ar.roadDamage||"-"} />
-          </InfoCard>
-          <InfoCard title="피해 원인 및 판정" color="red">
-            <InfoRow label="1차 원인" value={ar.cause1||"-"} />
-            <InfoRow label="2차 원인" value={ar.cause2||"-"} />
-            <InfoRow label="3차 피해" value={ar.cause3||"-"} />
-            <InfoRow label="복구 판정" value={ar.judgement||"개선복구"} highlight />
-            <InfoRow label="설계 기준" value={ar.designBasis||"-"} />
-          </InfoCard>
-        </div>
-        <div className="mt-5 bg-red-50 border border-red-200 rounded-lg p-5">
-          <h4 className="font-bold text-red-700 text-sm mb-3">관급자재 요약</h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div><span className="text-slate-500">품목</span><p className="font-semibold text-slate-800 mt-1">레미콘, 철근, 석재, 잡석</p></div>
-            <div><span className="text-slate-500">관급자재비</span><p className="font-bold text-red-600 mt-1">{fmt(totals.gwangubTotal)}원</p></div>
-            <div><span className="text-slate-500">수수료율</span><p className="font-semibold text-slate-800 mt-1">1.5%</p></div>
-            <div><span className="text-slate-500">관급수수료</span><p className="font-bold text-red-600 mt-1">{fmt(totals.gwangubFee)}원</p></div>
-          </div>
-        </div>
-      </section>
-
-      {/* 피해 현황 */}
-      <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <SectionTitle num="2" title="피해 현황" />
-          {editMode&&<button onClick={addDamage} className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700">+ 항목 추가</button>}
-        </div>
-        <div className="overflow-x-auto"><table className="w-full text-sm border-collapse"><thead><tr className="bg-slate-100">{editMode&&<th className="border border-slate-300 px-2 py-2 w-8 text-center">✓</th>}<th className="border border-slate-300 px-3 py-2 w-10 text-center">순번</th><th className="border border-slate-300 px-3 py-2 text-center">항목</th><th className="border border-slate-300 px-3 py-2 text-center">산출근거</th><th className="border border-slate-300 px-3 py-2 w-16 text-center">수량</th><th className="border border-slate-300 px-3 py-2 w-12 text-center">단위</th></tr></thead>
-        <tbody>{damageItems.map((d,idx)=>(<tr key={d.id} className={`${!d.enabled?"opacity-40 line-through":""} ${idx%2===0?"bg-white":"bg-slate-50"}`}>{editMode&&<td className="border border-slate-200 px-2 py-1.5 text-center"><input type="checkbox" checked={d.enabled} onChange={()=>toggleDamage(d.id)} className="w-4 h-4"/></td>}<td className="border border-slate-200 px-2 py-1.5 text-center text-slate-500">{idx+1}</td><td className="border border-slate-200 px-3 py-1.5">{editMode?<input value={d.name} onChange={e=>updateDamage(d.id,"name",e.target.value)} className="w-full px-1 py-0.5 border rounded text-sm"/>:d.name}</td><td className="border border-slate-200 px-3 py-1.5 text-slate-600">{editMode?<input value={d.basis} onChange={e=>updateDamage(d.id,"basis",e.target.value)} className="w-full px-1 py-0.5 border rounded text-sm"/>:d.basis}</td><td className="border border-slate-200 px-2 py-1.5 text-center font-medium">{editMode?<input type="number" value={d.qty} onChange={e=>updateDamage(d.id,"qty",e.target.value)} className="w-16 px-1 py-0.5 border rounded text-sm text-center"/>:d.qty}</td><td className="border border-slate-200 px-2 py-1.5 text-center">{d.unit}</td></tr>))}</tbody></table></div>
-      </section>
-
-      {/* 구조물 + 단면도 */}
-      <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-        <SectionTitle num="3" title="주요구조물 제원" />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-5">
-          <StructCard title="석축 (찰쌓기)" color="blue" specs={[{k:"형식",v:"찰쌓기 석축"},{k:"두께",v:`T = ${structSpecs.wallThickness}m`},{k:"높이",v:`H = ${structSpecs.wallHeight}m`},{k:"연장",v:`L = ${structSpecs.wallLength}m`}]}/>
-          <StructCard title="기초 콘크리트" color="red" specs={[{k:"규격",v:"25-21-150"},{k:"폭",v:`B = ${structSpecs.foundWidth}m`},{k:"근입",v:`D = ${structSpecs.foundDepth}m`},{k:"잡석",v:`T = ${structSpecs.japseokThickness}m`}]}/>
-          <StructCard title="부대시설" color="amber" specs={[{k:"부직포",v:"뒤채움 배면 전면 설치"},{k:"뒤채움",v:`소형장비 다짐 (B=${structSpecs.backfillWidth}m)`},{k:"포장",v:`As 절삭+덧씌우기 (W=${structSpecs.roadWidth}m)`},{k:"물푸기",v:"시공 중 배수"}]}/>
-        </div>
-        <div className="mt-6"><h3 className="text-sm font-bold text-slate-700 mb-3">설계 표준 단면도</h3><CrossSectionSVG specs={structSpecs}/></div>
-        {editMode&&(<div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg"><h4 className="text-sm font-bold text-amber-700 mb-3">구조물 제원 수정</h4><div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">{[["wallHeight","석축 높이(m)"],["wallLength","석축 연장(m)"],["wallThickness","석축 두께(m)"],["foundWidth","기초 폭(m)"],["foundDepth","기초 근입(m)"],["japseokThickness","잡석 두께(m)"],["backfillWidth","뒤채움 폭(m)"],["roadWidth","도로 폭(m)"]].map(([k,l])=>(<div key={k}><label className="text-slate-600">{l}</label><input type="number" step="0.1" value={structSpecs[k]} onChange={e=>setStructSpecs(p=>({...p,[k]:parseFloat(e.target.value)||0}))} className="w-full mt-1 px-2 py-1.5 border rounded text-sm"/></div>))}</div></div>)}
-      </section>
-
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <SumCard label="직접공사비" value={totals.directTotal} color="blue"/>
-        <SumCard label="사급자재비" value={totals.sagubTotal} color="orange"/>
-        <SumCard label="관급자재비" value={totals.gwangubTotal} color="red"/>
-        <SumCard label="관급수수료" value={totals.gwangubFee} color="pink"/>
-        <SumCard label="총공사비" value={totals.grandTotal} color="slate" bold/>
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════ 설계내역서 화면 ═══════════════
-function EstimateView({items,setItems,sagub,setSagub,gwangub,setGwangub,totals,editMode}){
-  const catOrder=["1.","2.","3.","4."];
-  const catNames={"1.":"토공","2.":"구조물공","3.":"포장공","4.":"부대공"};
-  const toggleItem=id=>setItems(p=>p.map(i=>i.id===id?{...i,enabled:!i.enabled}:i));
-  const toggleSagub=id=>setSagub(p=>p.map(i=>i.id===id?{...i,enabled:!i.enabled}:i));
-  const toggleGwangub=id=>setGwangub(p=>p.map(i=>i.id===id?{...i,enabled:!i.enabled}:i));
-  const addItem=()=>{const mx=Math.max(...items.map(i=>i.id),0);setItems(p=>[...p,{id:mx+1,cat:"4.",catName:"부대공",name:"새 공종",spec:"",unit:"m²",qty:1,labor:0,material:0,expense:0,total:0,note:"",enabled:true}]);};
-  const updateItem=(id,field,value)=>{setItems(p=>p.map(i=>{if(i.id!==id)return i;const u={...i,[field]:field==="qty"?parseFloat(value)||0:value};if(["labor","material","expense"].includes(field)){u[field]=parseInt(value)||0;u.total=u.labor+u.material+u.expense;}return u;}));};
-  return (
-    <div className="space-y-6">
-      <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <SectionTitle num="2" title="설계 내역서"/>
-          {editMode&&<button onClick={addItem} className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700">+ 공종 추가</button>}
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs border-collapse min-w-[1100px]">
-            <thead>
-              <tr className="bg-slate-700 text-white">
-                {editMode&&<th rowSpan={2} className="border border-slate-500 px-1 py-2 w-8 text-center">✓</th>}
-                <th rowSpan={2} className="border border-slate-500 px-2 py-2 w-12 text-center">공종</th>
-                <th rowSpan={2} className="border border-slate-500 px-2 py-2 text-center">품 명</th>
-                <th rowSpan={2} className="border border-slate-500 px-2 py-2 text-center">규 격</th>
-                <th rowSpan={2} className="border border-slate-500 px-1 py-2 w-14 text-center">수량</th>
-                <th rowSpan={2} className="border border-slate-500 px-1 py-2 w-10 text-center">단위</th>
-                <th colSpan={2} className="border border-slate-500 px-2 py-1 text-center bg-slate-600">합 계</th>
-                <th colSpan={2} className="border border-slate-500 px-2 py-1 text-center bg-blue-700">노 무 비</th>
-                <th colSpan={2} className="border border-slate-500 px-2 py-1 text-center bg-emerald-700">재 료 비</th>
-                <th colSpan={2} className="border border-slate-500 px-2 py-1 text-center bg-amber-700">경 비</th>
-              </tr>
-              <tr className="bg-slate-600 text-white">{["단가","금액","단가","금액","단가","금액","단가","금액"].map((t,i)=>(<th key={i} className="border border-slate-500 px-1 py-1 text-center">{t}</th>))}</tr>
-            </thead>
-            <tbody>
-              <tr className="bg-slate-200 font-bold">{editMode&&<td className="border border-slate-300"/>}<td colSpan={5} className="border border-slate-300 px-3 py-2 text-center tracking-widest text-slate-700">순 공 사 비</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-700">{fmt(totals.directTotal)}</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-700">{fmt(Object.values(totals.catsLabor).reduce((a,b)=>a+b,0))}</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-700">{fmt(Object.values(totals.catsMat).reduce((a,b)=>a+b,0))}</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-700">{fmt(Object.values(totals.catsExp).reduce((a,b)=>a+b,0))}</td></tr>
-              {catOrder.map(cat=>{const ci=items.filter(i=>i.cat===cat);if(!ci.length)return null;return(<Fragment key={cat}>
-                <tr className="bg-blue-50 font-bold">{editMode&&<td className="border border-slate-300"/>}<td className="border border-slate-300 px-2 py-2 text-center text-blue-700">{cat}</td><td className="border border-slate-300 px-2 py-2 text-blue-700">{catNames[cat]}</td>{[...Array(3)].map((_,i)=><td key={i} className="border border-slate-300"/>)}<td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-700">{fmt(totals.cats[cat])}</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-600">{fmt(totals.catsLabor[cat])}</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-600">{fmt(totals.catsMat[cat])}</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-600">{fmt(totals.catsExp[cat])}</td></tr>
-                {ci.map((item,idx)=>(<tr key={item.id} className={`${!item.enabled?"opacity-40 line-through":""} ${idx%2===0?"bg-white":"bg-slate-50"} hover:bg-blue-50 transition`}>
-                  {editMode&&<td className="border border-slate-200 px-1 py-1.5 text-center"><input type="checkbox" checked={item.enabled} onChange={()=>toggleItem(item.id)} className="w-4 h-4"/></td>}
-                  <td className="border border-slate-200 px-1 py-1.5 text-center text-slate-400">{item.note}</td>
-                  <td className="border border-slate-200 px-2 py-1.5">{editMode?<input value={item.name} onChange={e=>updateItem(item.id,"name",e.target.value)} className="w-full px-1 py-0.5 border rounded text-xs"/>:item.name}</td>
-                  <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{editMode?<input value={item.spec} onChange={e=>updateItem(item.id,"spec",e.target.value)} className="w-full px-1 py-0.5 border rounded text-xs"/>:item.spec}</td>
-                  <td className="border border-slate-200 px-1 py-1.5 text-center">{editMode?<input type="number" value={item.qty} onChange={e=>updateItem(item.id,"qty",e.target.value)} className="w-16 px-1 py-0.5 border rounded text-xs text-center"/>:item.qty}</td>
-                  <td className="border border-slate-200 px-1 py-1.5 text-center">{item.unit}</td>
-                  <td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(item.total)}</td>
-                  <td className="border border-slate-200 px-1 py-1.5 text-right font-medium">{fmt(Math.round(item.qty*item.total))}</td>
-                  <td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(item.labor)}</td>
-                  <td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(Math.round(item.qty*item.labor))}</td>
-                  <td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(item.material)}</td>
-                  <td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(Math.round(item.qty*item.material))}</td>
-                  <td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(item.expense)}</td>
-                  <td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(Math.round(item.qty*item.expense))}</td>
-                </tr>))}
-              </Fragment>);})}
-              {/* 사급 */}
-              <tr className="bg-orange-50 font-bold">{editMode&&<td className="border border-slate-300"/>}<td className="border border-slate-300 px-2 py-2 text-center text-orange-700">5.</td><td className="border border-slate-300 px-2 py-2 text-orange-700">사급자재대</td><td colSpan={4} className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-orange-700">{fmt(totals.sagubTotal)}</td><td colSpan={6} className="border border-slate-300"/></tr>
-              {sagub.map((s,idx)=>(<tr key={s.id} className={`${!s.enabled?"opacity-40 line-through":""} ${idx%2===0?"bg-white":"bg-orange-50/30"}`}>{editMode&&<td className="border border-slate-200 px-1 py-1.5 text-center"><input type="checkbox" checked={s.enabled} onChange={()=>toggleSagub(s.id)} className="w-4 h-4"/></td>}<td className="border border-slate-200"/><td className="border border-slate-200 px-2 py-1.5">{s.name}</td><td className="border border-slate-200 px-2 py-1.5 text-slate-600">{s.spec}</td><td className="border border-slate-200 px-1 py-1.5 text-center">{s.qty}</td><td className="border border-slate-200 px-1 py-1.5 text-center">{s.unit}</td><td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(s.unitPrice)}</td><td className="border border-slate-200 px-1 py-1.5 text-right font-medium">{fmt(Math.round(s.qty*s.unitPrice))}</td><td colSpan={6} className="border border-slate-200 text-center text-slate-400">—</td></tr>))}
-              {/* 관급 */}
-              <tr className="bg-red-50 font-bold">{editMode&&<td className="border border-slate-300"/>}<td className="border border-slate-300 px-2 py-2 text-center text-red-700">6.</td><td className="border border-slate-300 px-2 py-2 text-red-700">관급자재대</td><td colSpan={4} className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-red-700">{fmt(totals.gwangubTotal)}</td><td colSpan={6} className="border border-slate-300"/></tr>
-              {gwangub.map((g,idx)=>(<tr key={g.id} className={`${!g.enabled?"opacity-40 line-through":""} ${idx%2===0?"bg-white":"bg-red-50/30"}`}>{editMode&&<td className="border border-slate-200 px-1 py-1.5 text-center"><input type="checkbox" checked={g.enabled} onChange={()=>toggleGwangub(g.id)} className="w-4 h-4"/></td>}<td className="border border-slate-200 px-1 py-1.5 text-center text-red-500 text-[10px]">{g.sub}</td><td className="border border-slate-200 px-2 py-1.5">{g.name}</td><td className="border border-slate-200 px-2 py-1.5 text-slate-600">{g.spec}</td><td className="border border-slate-200 px-1 py-1.5 text-center">{g.qty}</td><td className="border border-slate-200 px-1 py-1.5 text-center">{g.unit}</td><td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(g.unitPrice)}</td><td className="border border-slate-200 px-1 py-1.5 text-right font-medium">{fmt(Math.round(g.qty*g.unitPrice))}</td><td colSpan={6} className="border border-slate-200 text-center text-slate-400">—</td></tr>))}
-              <tr className="bg-red-100 font-bold">{editMode&&<td className="border border-slate-300"/>}<td colSpan={5} className="border border-slate-300 px-3 py-2 text-center text-red-700">관급수수료 (1.5%)</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-red-700">{fmt(totals.gwangubFee)}</td><td colSpan={6} className="border border-slate-300"/></tr>
-              <tr className="bg-slate-800 text-white font-bold">{editMode&&<td className="border border-slate-600"/>}<td colSpan={5} className="border border-slate-600 px-3 py-3 text-center text-base tracking-widest">총 공 사 비</td><td className="border border-slate-600"/><td className="border border-slate-600 px-2 py-3 text-right text-lg text-yellow-300">{fmt(totals.grandTotal)}</td><td colSpan={6} className="border border-slate-600"/></tr>
-            </tbody>
-          </table>
-        </div>
-        <div className="mt-6 grid grid-cols-2 md:grid-cols-5 gap-3">
-          <SumCard label="직접공사비" value={totals.directTotal} color="blue"/>
-          <SumCard label="사급자재비" value={totals.sagubTotal} color="orange"/>
-          <SumCard label="관급자재비" value={totals.gwangubTotal} color="red"/>
-          <SumCard label="관급수수료" value={totals.gwangubFee} color="pink"/>
-          <SumCard label="총공사비" value={totals.grandTotal} color="slate" bold/>
-        </div>
-
-        {/* 엑셀 다운로드 버튼 */}
-        <div className="mt-6 p-4 bg-slate-50 border border-slate-200 rounded-lg">
-          <h4 className="text-sm font-bold text-slate-700 mb-3">엑셀 다운로드</h4>
-          <div className="flex flex-wrap gap-3">
-            <ExcelButton label="📊 설계내역서" endpoint="generate-excel" items={items} sagub={sagub} gwangub={gwangub} totals={totals} />
-            <ExcelButton label="📋 수량산출서" endpoint="generate-quantity" items={items} sagub={sagub} gwangub={gwangub} totals={totals} />
-            <ExcelButton label="📑 일위대가" endpoint="generate-unitprice" items={items} sagub={sagub} gwangub={gwangub} totals={totals} />
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════
-// 메인 앱
-// ═══════════════════════════════════════════════
+/* ============================================================
+   Main Component
+   ============================================================ */
 export default function App() {
-  const [view, setView] = useState("analysis");
-  const [items, setItems] = useState(emptyItems);
-  const [sagub, setSagub] = useState(emptySagub);
-  const [gwangub, setGwangub] = useState(emptyGwangub);
-  const [structSpecs, setStructSpecs] = useState(emptyStruct);
-  const [damageItems, setDamageItems] = useState(emptyDamage);
+  const [view, setView] = useState("analysis"); // analysis | estimate
+  const [designItems, setDesignItems] = useState(makeDefaultItems());
+  const [damageItems, setDamageItems] = useState(makeDefaultDamage());
+  const [sagubItems] = useState(makeSagubItems());
+  const [gwangubItems] = useState(makeGwangubItems());
   const [editMode, setEditMode] = useState(false);
-  const [imagePreview, setImagePreview] = useState(null);
-  const [showImageModal, setShowImageModal] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [photoUrl, setPhotoUrl] = useState(null);
+  const [photoModal, setPhotoModal] = useState(false);
+  const [comment, setComment] = useState("");
   const fileInputRef = useRef(null);
-  const imageInputRef = useRef(null);
-  const totals = calcTotals(items, sagub, gwangub);
+  const jsonInputRef = useRef(null);
 
-  // 이미지 리사이즈 (Netlify 1MB 제한 대응)
-  const resizeImage = (file, maxSize = 1024) => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          let w = img.width, h = img.height;
-          if (w > maxSize || h > maxSize) {
-            if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
-            else { w = Math.round(w * maxSize / h); h = maxSize; }
+  /* ========== ③ 피해현황 → 설계물량 연동 ========== */
+  const syncDamageToDesign = useCallback((newDamage) => {
+    setDesignItems(prev => {
+      const next = [...prev];
+      newDamage.forEach(dmg => {
+        const mappings = DAMAGE_TO_DESIGN_MAP[dmg.id];
+        if (!mappings) return;
+        mappings.forEach(m => {
+          const idx = next.findIndex(d => d.id === m.designId);
+          if (idx >= 0) {
+            const newQty = Math.ceil(dmg.qty * m.factor + m.addOffset);
+            next[idx] = { ...next[idx], qty: newQty };
           }
-          canvas.width = w; canvas.height = h;
-          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-          const resized = canvas.toDataURL("image/jpeg", 0.8);
-          resolve(resized);
-        };
-        img.src = e.target.result;
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
-  // 사진 업로드 → 리사이즈 → API 분석 호출
-  const handleImageUpload = async (e) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const fullBase64 = await resizeImage(file, 1024);
-      setImagePreview(fullBase64);
-      const pureBase64 = fullBase64.replace(/^data:image\/\w+;base64,/, "");
-      const res = await fetch("/.netlify/functions/analyze-photo", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: pureBase64 }),
+        });
       });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || errData.detail || `서버 오류: ${res.status}`);
-      }
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      applyAnalysisData(data);
-    } catch (err) {
-      console.error("API 분석 실패:", err);
-      setError(`AI 분석 실패: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-    e.target.value = "";
-  };
-
-  // AI 분석 결과를 state에 반영 (서버 반환 형식에 맞춤)
-  // 서버 반환: { analysis, items: {토공:[...],구조물공:[...],...}, materials: {관급:[...],사급:[...]}, structure }
-  const applyAnalysisData = (data) => {
-    // 1. 분석 결과 (종합분석 카드용)
-    const a = data.analysis || {};
-    setAnalysisResult({
-      bankSide: a.riverBank || "좌안",
-      judgement: a.judgement || "개선복구",
-      damageLength: a.damageLength ? `약 ${a.damageLength}m` : "-",
-      wallHeight: a.damageHeight ? `약 ${a.damageHeight}m` : "-",
-      cause1: a.cause || "-",
-      cause2: a.damageDescription || "-",
-      cause3: "-",
-      designBasis: "기초 근입 D=1.0m 이상",
+      return next;
     });
+  }, []);
 
-    // 2. 설계 물량 → items (서버에서 이미 단가 적용됨)
-    const catMap = { "토공":"1.", "구조물공":"2.", "포장공":"3.", "부대공":"4." };
-    const catNameMap = { "1.":"토공", "2.":"구조물공", "3.":"포장공", "4.":"부대공" };
-    let allItems = [];
-    let itemId = 1;
-    if (data.items) {
-      for (const [catName, catItems] of Object.entries(data.items)) {
-        const cat = catMap[catName] || "4.";
-        if (!Array.isArray(catItems)) continue;
-        for (const ci of catItems) {
-          const price = PRICE_DB[ci.priceId] || {};
-          const labor = price.labor || ci.labor || 0;
-          const material = price.material || ci.material || 0;
-          const expense = price.expense || ci.expense || 0;
-          allItems.push({
-            id: itemId++, cat, catName: catNameMap[cat] || catName,
-            name: price.name || ci.name || "미지정",
-            spec: price.spec || ci.spec || "",
-            unit: price.unit || ci.unit || "m²",
-            qty: ci.qty || 0,
-            labor, material, expense,
-            total: labor + material + expense,
-            note: ci.priceId || "",
-            enabled: true,
-          });
-        }
-      }
-    }
-    setItems(allItems);
-
-    // 3. 피해현황 (분석 결과에서 생성)
-    const dmg = [];
-    if (a.damageLength) dmg.push({ id:1, name:"석축/호안 붕괴", basis:`붕괴 연장 약 ${a.damageLength}m × 높이 약 ${a.damageHeight||2}m`, qty: Math.round((a.damageLength||0)*(a.damageHeight||2)), unit:"㎡", enabled:true });
-    if (allItems.some(i=>i.note==="#.325"||i.note==="#.327"||i.note==="#.331")) dmg.push({ id:2, name:"도로 포장 파손", basis:"파손 구간 복구", qty: allItems.find(i=>i.cat==="3.")?.qty||0, unit:"㎡", enabled:true });
-    if (allItems.some(i=>i.note==="#.57"||i.note==="#.58")) dmg.push({ id:3, name:"기초 세굴", basis:"세굴 구간 터파기", qty: allItems.find(i=>i.note==="#.57"||i.note==="#.58")?.qty||0, unit:"㎥", enabled:true });
-    if (allItems.some(i=>i.note==="#.127")) dmg.push({ id:4, name:"토사 유실/퇴적", basis:"토사 반출", qty: allItems.find(i=>i.note==="#.127")?.qty||0, unit:"㎥", enabled:true });
-    if (dmg.length === 0) dmg.push({ id:1, name:"피해 현황", basis:"사진 분석 기반", qty:0, unit:"㎡", enabled:true });
-    setDamageItems(dmg);
-
-    // 4. 관급/사급 자재
-    if (data.materials) {
-      if (data.materials["관급"]) {
-        setGwangub(data.materials["관급"].map((g,i) => ({
-          id: 201+i, sub: `6.${i+1}`, name: g.name, spec: g.spec||"",
-          unit: g.unit||"㎥", qty: g.qty||0, unitPrice: g.unitPrice||0, enabled: true,
-        })));
-      }
-      if (data.materials["사급"]) {
-        setSagub(data.materials["사급"].map((s,i) => ({
-          id: 101+i, name: s.name, spec: s.spec||"",
-          unit: s.unit||"㎡", qty: s.qty||0, unitPrice: s.unitPrice||0, enabled: true,
-        })));
-      }
-    }
-
-    // 5. 구조물 제원
-    if (data.structure) {
-      const st = data.structure;
-      const parseNum = (v) => parseFloat(String(v).replace(/[^0-9.]/g,"")) || 0;
-      setStructSpecs({
-        wallHeight: parseNum(a.damageHeight) || 2.5,
-        wallLength: (parseNum(a.damageLength) || 20) + 0.5,
-        wallThickness: 0.35,
-        foundWidth: parseNum(a.damageLength) > 0 ? 2.5 : 0,
-        foundDepth: parseNum(st.embedDepth) || 1.0,
-        japseokThickness: 0.5,
-        backfillWidth: 1.0,
-        backfillDepth: 2.0,
-        roadWidth: 2.0,
-        roadThickness: 0.05,
-      });
-    }
+  const updateDamageQty = (id, newQty) => {
+    const updated = damageItems.map(d => d.id === id ? { ...d, qty: Number(newQty) || 0 } : d);
+    setDamageItems(updated);
+    syncDamageToDesign(updated.filter(d => d.enabled));
   };
 
-  // 전체 초기화 (새 작업)
-  const resetAll = () => {
-    if (!confirm("모든 데이터를 초기화하고 새 작업을 시작하시겠습니까?")) return;
-    setView("analysis");
-    setItems(emptyItems); setSagub(emptySagub); setGwangub(emptyGwangub);
-    setStructSpecs(emptyStruct); setDamageItems(emptyDamage);
-    setEditMode(false); setImagePreview(null); setShowImageModal(false);
-    setAnalysisResult(null); setLoading(false); setError(null);
+  /* ========== ① 체크박스 전체선택/해제 ========== */
+  const allDamageChecked = damageItems.every(d => d.enabled);
+  const someDamageChecked = damageItems.some(d => d.enabled);
+  const toggleAllDamage = () => {
+    const newVal = !allDamageChecked;
+    setDamageItems(prev => prev.map(d => ({ ...d, enabled: newVal })));
   };
 
-  // PC 저장
-  const saveToFile = () => {
-    const data = JSON.stringify({ items, sagub, gwangub, structSpecs, damageItems, analysisResult, savedAt: new Date().toISOString() }, null, 2);
-    const blob = new Blob([data], { type: "application/json" });
+  const allDesignChecked = designItems.every(d => d.enabled);
+  const someDesignChecked = designItems.some(d => d.enabled);
+  const toggleAllDesign = () => {
+    const newVal = !allDesignChecked;
+    setDesignItems(prev => prev.map(d => ({ ...d, enabled: newVal })));
+  };
+
+  const toggleDamageItem = (id) => {
+    setDamageItems(prev => prev.map(d => d.id === id ? { ...d, enabled: !d.enabled } : d));
+  };
+  const toggleDesignItem = (id) => {
+    setDesignItems(prev => prev.map(d => d.id === id ? { ...d, enabled: !d.enabled } : d));
+  };
+
+  /* 설계물량 수량 편집 */
+  const updateDesignQty = (id, newQty) => {
+    setDesignItems(prev => prev.map(d => d.id === id ? { ...d, qty: Number(newQty) || 0 } : d));
+  };
+
+  /* ========== 금액 계산 (enabled 항목만) ========== */
+  const activeDesign = useMemo(() => designItems.filter(i => i.enabled), [designItems]);
+
+  const calcCatTotal = useCallback((catCode) => {
+    return activeDesign.filter(i => i.cat === catCode).reduce((s, i) => {
+      const p = PRICE_DB[i.priceId] || {};
+      return { g: s.g + Math.round(i.qty * (p.total||0)),
+               i: s.i + Math.round(i.qty * (p.labor||0)),
+               k: s.k + Math.round(i.qty * (p.material||0)),
+               m: s.m + Math.round(i.qty * (p.expense||0)) };
+    }, { g:0, i:0, k:0, m:0 });
+  }, [activeDesign]);
+
+  const togong = calcCatTotal("1.");
+  const gujo = calcCatTotal("2.");
+  const pojang = calcCatTotal("3.");
+  const budae = calcCatTotal("4.");
+  const sunG = togong.g + gujo.g + pojang.g + budae.g;
+  const sagubTotal = sagubItems.reduce((s,i) => s + Math.round(i.qty*i.unitPrice), 0);
+  const gwangubTotal = gwangubItems.reduce((s,i) => s + Math.round(i.qty*i.unitPrice), 0);
+  const gwangubFee = Math.round(gwangubTotal * FEE_RATE);
+  const grandTotal = sunG + sagubTotal + gwangubTotal + gwangubFee;
+
+  /* ========== JSON 저장/불러오기 ========== */
+  const handleSaveJson = () => {
+    const data = { version:"7.2", designItems, damageItems, sagubItems, gwangubItems, comment, savedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type:"application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url;
-    a.download = `소규모주민숙원사업_${new Date().toISOString().slice(0,10)}.json`;
+    const a = document.createElement("a");
+    a.href = url; a.download = `소규모주민숙원_${new Date().toISOString().slice(0,10)}.json`;
     a.click(); URL.revokeObjectURL(url);
   };
-
-  // PC 불러오기
-  const loadFromFile = (e) => {
-    const file = e.target.files?.[0]; if (!file) return;
+  const handleLoadJson = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const d = JSON.parse(ev.target.result);
-        if(d.items)setItems(d.items); if(d.sagub)setSagub(d.sagub);
-        if(d.gwangub)setGwangub(d.gwangub); if(d.structSpecs)setStructSpecs(d.structSpecs);
-        if(d.damageItems)setDamageItems(d.damageItems);
-        if(d.analysisResult)setAnalysisResult(d.analysisResult);
-        setImagePreview("loaded"); // 보고서 화면으로 전환
-        alert("불러오기 완료");
-      } catch { alert("파일 형식이 올바르지 않습니다."); }
+        const data = JSON.parse(ev.target.result);
+        if (data.designItems) setDesignItems(data.designItems);
+        if (data.damageItems) setDamageItems(data.damageItems);
+        if (data.comment) setComment(data.comment);
+        alert("불러오기 완료!");
+      } catch { alert("파일 형식 오류"); }
     };
-    reader.readAsText(file); e.target.value = "";
+    reader.readAsText(file);
+    e.target.value = "";
   };
 
-  // ═══════════════ 렌더링 ═══════════════
+  /* 사진 업로드 (표시용) */
+  const handlePhoto = (e) => {
+    const file = e.target.files?.[0];
+    if (file) setPhotoUrl(URL.createObjectURL(file));
+  };
+
+  /* ============================================================
+     RENDER
+     ============================================================ */
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-white" style={{ fontFamily: "'Pretendard','Noto Sans KR',sans-serif" }}>
+      {/* 타이틀 */}
+      <div className="bg-slate-800 text-white py-6 px-4">
+        <div className="max-w-7xl mx-auto">
+          <p className="text-blue-300 text-xs font-medium tracking-widest mb-1">소규모주민숙원사업</p>
+          <h1 className="text-2xl font-bold tracking-tight">종합검토보고서 <span className="text-sm font-normal text-slate-400">v7.2</span></h1>
+          <p className="text-slate-400 mt-1 text-xs">좌안 석축 붕괴 구간 · 개선복구 · 2025년 충청북도 단가 적용</p>
+        </div>
+      </div>
 
-      {/* ══════ 초기 화면: 사진 업로드 ══════ */}
-      {!imagePreview ? (
-        <div className="flex items-center justify-center min-h-screen p-4">
-          <div className="w-full max-w-lg">
-            <div className="text-center mb-8">
-              <h1 className="text-2xl font-bold text-slate-800">소규모주민숙원사업</h1>
-              <p className="text-sm text-slate-500 mt-2">하천 수해복구 설계 분석 시스템</p>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-8 shadow-sm">
-              {loading ? (
-                <div className="text-center py-12">
-                  <div className="inline-block w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4" />
-                  <p className="text-base font-medium text-slate-700">AI가 현장 사진을 분석 중입니다...</p>
-                  <p className="text-sm text-slate-400 mt-2">피해 유형, 물량, 공법을 산정하고 있습니다</p>
+      {/* 탭 + 도구 */}
+      <div className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex gap-1">
+            <button onClick={() => setView("analysis")} className={`px-3 py-1.5 text-xs rounded font-medium ${view==="analysis"?"bg-blue-600 text-white":"bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+              AI 분석
+            </button>
+            <button onClick={() => setView("estimate")} className={`px-3 py-1.5 text-xs rounded font-medium ${view==="estimate"?"bg-blue-600 text-white":"bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+              설계내역서
+            </button>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            <button onClick={handleSaveJson} className="px-2 py-1 text-xs bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100">💾 저장</button>
+            <button onClick={() => jsonInputRef.current?.click()} className="px-2 py-1 text-xs bg-yellow-50 text-yellow-700 border border-yellow-200 rounded hover:bg-yellow-100">📂 불러오기</button>
+            <input ref={jsonInputRef} type="file" accept=".json" className="hidden" onChange={handleLoadJson} />
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 py-6 space-y-8">
+
+        {/* ============================================ */}
+        {view === "analysis" && (
+          <>
+            {/* 사진 */}
+            <section>
+              <SectionTitle num="📷" title="현장 사진" />
+              <div className="mt-3 flex gap-3 items-start flex-wrap">
+                <button onClick={() => fileInputRef.current?.click()} className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
+                  사진 업로드
+                </button>
+                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
+                {photoUrl && (
+                  <img src={photoUrl} alt="현장" className="h-40 rounded border cursor-pointer hover:opacity-80" onClick={() => setPhotoModal(true)} />
+                )}
+              </div>
+              {photoModal && photoUrl && (
+                <div className="fixed inset-0 z-50 bg-black bg-opacity-80 flex items-center justify-center p-4" onClick={() => setPhotoModal(false)}>
+                  <img src={photoUrl} alt="확대" className="max-w-full max-h-full rounded" />
                 </div>
-              ) : (
-                <>
-                  <div onClick={()=>imageInputRef.current?.click()} className="border-2 border-dashed border-slate-300 rounded-xl p-12 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-all">
-                    <div className="text-5xl mb-4">📷</div>
-                    <p className="text-base font-medium text-slate-700">현장 피해 사진을 첨부하세요</p>
-                    <p className="text-sm text-slate-400 mt-2">클릭하여 파일 선택 (JPG, PNG)</p>
-                    <p className="text-xs text-blue-500 mt-3">사진 업로드 → AI 자동 분석 → 설계물량 산정</p>
-                  </div>
-                  <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-                  <div className="mt-6 flex justify-center">
-                    <button onClick={()=>fileInputRef.current?.click()} className="px-4 py-2 bg-slate-600 text-white text-sm rounded-lg hover:bg-slate-700 font-medium">📂 이전 데이터 불러오기</button>
-                    <input ref={fileInputRef} type="file" accept=".json" onChange={loadFromFile} className="hidden"/>
-                  </div>
-                </>
               )}
-            </div>
-            <p className="text-center text-xs text-slate-400 mt-6">2025년 단가목록 적용 (충청북도)</p>
-          </div>
-        </div>
-      ) : (
-      /* ══════ 보고서 화면 ══════ */
-      <>
-      {/* 로딩 오버레이 */}
-      {loading && (
-        <div className="fixed inset-0 z-[200] bg-white/80 flex items-center justify-center">
-          <div className="text-center">
-            <div className="inline-block w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"/>
-            <p className="text-base font-medium text-slate-700">AI 분석 중...</p>
-          </div>
-        </div>
-      )}
+            </section>
 
-      {/* 네비바 */}
-      <div className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex items-center justify-between h-14">
-            <h1 className="text-base font-bold text-slate-800 hidden sm:block">소규모주민숙원사업</h1>
-            <div className="flex bg-slate-100 rounded-lg p-1">
-              <button onClick={()=>setView("analysis")} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view==="analysis"?"bg-blue-600 text-white shadow-sm":"text-slate-600 hover:bg-slate-200"}`}>🔍 AI 분석</button>
-              <button onClick={()=>setView("estimate")} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view==="estimate"?"bg-blue-600 text-white shadow-sm":"text-slate-600 hover:bg-slate-200"}`}>📋 설계내역서</button>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={resetAll} className="px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg hover:bg-red-600 font-medium">🔄 새 작업</button>
-              <button onClick={saveToFile} className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 font-medium">💾 저장</button>
-              <button onClick={()=>fileInputRef.current?.click()} className="px-3 py-1.5 bg-slate-600 text-white text-xs rounded-lg hover:bg-slate-700 font-medium">📂 열기</button>
-              <input ref={fileInputRef} type="file" accept=".json" onChange={loadFromFile} className="hidden"/>
-              <button onClick={()=>setEditMode(!editMode)} className={`px-3 py-1.5 text-xs rounded-lg font-medium ${editMode?"bg-amber-500 text-white":"bg-slate-200 text-slate-700 hover:bg-slate-300"}`}>{editMode?"✏️ 편집중":"✏️ 편집"}</button>
-            </div>
-          </div>
-        </div>
+            {/* 종합분석 */}
+            <section>
+              <SectionTitle num="1" title="종합 분석" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <InfoCard title="현장 제원" color="blue">
+                  <InfoRow label="피해 위치" value="좌안 (도로변 석축 호안)" />
+                  <InfoRow label="피해 연장" value="약 20m" />
+                  <InfoRow label="석축 높이" value="약 2.5m (찰쌓기)" />
+                  <InfoRow label="기초 세굴 깊이" value="약 1.0m" />
+                  <InfoRow label="도로 파손" value="약 20m × 2.0m" />
+                </InfoCard>
+                <InfoCard title="피해 원인 및 판정" color="red">
+                  <InfoRow label="1차 원인" value="집중호우 시 하천 급류 수충" />
+                  <InfoRow label="2차 원인" value="석축 기초 세굴 → 전면 붕괴" />
+                  <InfoRow label="3차 피해" value="도로 노면 함몰 + 관로 노출" />
+                  <InfoRow label="설계 기준" value="기초 근입 D=1.0m 이상" />
+                </InfoCard>
+              </div>
+              {/* 관급자재 요약 */}
+              <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-4">
+                <h4 className="font-bold text-red-700 text-sm mb-2">관급자재 요약</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  <div><span className="text-slate-500">품목</span><p className="font-semibold text-slate-800 mt-0.5">레미콘, 철근, 석재, 잡석</p></div>
+                  <div><span className="text-slate-500">관급자재비</span><p className="font-bold text-red-600 mt-0.5">{fmt(gwangubTotal)}원</p></div>
+                  <div><span className="text-slate-500">수수료율</span><p className="font-semibold text-slate-800 mt-0.5">1.5%</p></div>
+                  <div><span className="text-slate-500">관급수수료</span><p className="font-bold text-red-600 mt-0.5">{fmt(gwangubFee)}원</p></div>
+                </div>
+              </div>
+            </section>
+
+            {/* ========== 피해현황 (체크박스 + 전체선택) ========== */}
+            <section>
+              <div className="flex items-center justify-between">
+                <SectionTitle num="2" title="피해 현황 (설계물량)" />
+                <button onClick={() => setEditMode(!editMode)} className="text-xs px-3 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">
+                  {editMode ? "✅ 편집완료" : "✏️ 편집"}
+                </button>
+              </div>
+              <p className="text-xs text-orange-600 mt-1">* 피해현황 수량 변경 시 설계내역서 물량이 자동 연동됩니다</p>
+              <div className="mt-3 overflow-x-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="bg-blue-700 text-white">
+                      {editMode && (
+                        <th className="border border-blue-600 px-2 py-1.5 w-8">
+                          <input type="checkbox" checked={allDamageChecked} ref={el => { if(el) el.indeterminate = !allDamageChecked && someDamageChecked; }}
+                            onChange={toggleAllDamage} className="w-4 h-4" title="전체선택/해제" />
+                        </th>
+                      )}
+                      <th className="border border-blue-600 px-2 py-1.5 w-8">No</th>
+                      <th className="border border-blue-600 px-2 py-1.5">항목</th>
+                      <th className="border border-blue-600 px-2 py-1.5">산출근거</th>
+                      <th className="border border-blue-600 px-2 py-1.5 w-16">수량</th>
+                      <th className="border border-blue-600 px-2 py-1.5 w-12">단위</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {damageItems.map((d, idx) => (
+                      <tr key={d.id} className={`${!d.enabled ? "bg-slate-100 opacity-50" : idx%2===0 ? "bg-white" : "bg-slate-50"}`}>
+                        {editMode && (
+                          <td className="border border-slate-200 px-2 py-1 text-center">
+                            <input type="checkbox" checked={d.enabled} onChange={() => toggleDamageItem(d.id)} className="w-4 h-4" />
+                          </td>
+                        )}
+                        <td className="border border-slate-200 px-2 py-1 text-center">{idx+1}</td>
+                        <td className="border border-slate-200 px-2 py-1">{d.item}</td>
+                        <td className="border border-slate-200 px-2 py-1 text-slate-600">{d.basis}</td>
+                        <td className="border border-slate-200 px-2 py-1 text-center font-medium">
+                          {editMode ? (
+                            <input type="number" value={d.qty} onChange={(e) => updateDamageQty(d.id, e.target.value)}
+                              className="w-full text-center border rounded px-1 py-0.5 text-sm" />
+                          ) : d.qty}
+                        </td>
+                        <td className="border border-slate-200 px-2 py-1 text-center">{d.unit}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            {/* 메모/수정사항 */}
+            <section>
+              <SectionTitle num="📝" title="수정사항 / 메모" />
+              <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="수정사항, 현장명, 하천명 등을 입력하세요..."
+                className="w-full mt-2 border border-slate-300 rounded p-3 text-sm h-20 resize-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400" />
+            </section>
+
+            {/* 주요 구조물 제원 */}
+            <section>
+              <SectionTitle num="3" title="주요 구조물 제원" />
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <StructCard title="석축 (찰쌓기)" specs={[
+                  {k:"형식",v:"찰쌓기 석축 (자연석)"},{k:"높이",v:"H = 2.5m"},{k:"두께",v:"T = 35cm 이하"},{k:"연장",v:"L = 20.5m"},{k:"기초 근입",v:"D = 1.0m"},
+                ]} color="blue" />
+                <StructCard title="기초 콘크리트" specs={[
+                  {k:"규격",v:"25-210-12 (철근콘크리트)"},{k:"폭",v:"B = 2.5m"},{k:"깊이",v:"D = 1.0m"},{k:"연장",v:"L = 20.5m"},{k:"철근",v:"HD13 @200, SD400"},
+                ]} color="red" />
+                <StructCard title="기초 지정 (잡석다짐)" specs={[
+                  {k:"재료",v:"잡석 (기계다짐)"},{k:"폭",v:"B = 2.5m"},{k:"두께",v:"T = 0.5m"},{k:"연장",v:"L = 20.5m"},{k:"부직포",v:"기초 하부 + 석축 배면"},
+                ]} color="amber" />
+              </div>
+            </section>
+
+            {/* 설계단면도 */}
+            <section>
+              <SectionTitle num="4" title="설계 단면도 (개략)" />
+              <div className="mt-3 flex justify-center">
+                <CrossSectionSVG />
+              </div>
+            </section>
+          </>
+        )}
+
+        {/* ============================================ */}
+        {view === "estimate" && (
+          <>
+            {/* 설계물량 편집 테이블 (체크박스 + 전체선택) */}
+            <section>
+              <div className="flex items-center justify-between">
+                <SectionTitle num="📋" title="설계물량 (체크박스 편집)" />
+                <button onClick={() => setEditMode(!editMode)} className="text-xs px-3 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">
+                  {editMode ? "✅ 편집완료" : "✏️ 편집"}
+                </button>
+              </div>
+              {editMode && (
+                <div className="mt-3 overflow-x-auto border border-slate-200 rounded-lg">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-700 text-white">
+                        <th className="border border-slate-600 px-2 py-1.5 w-8">
+                          <input type="checkbox" checked={allDesignChecked} ref={el => { if(el) el.indeterminate = !allDesignChecked && someDesignChecked; }}
+                            onChange={toggleAllDesign} className="w-4 h-4" title="전체선택/해제" />
+                        </th>
+                        <th className="border border-slate-600 px-2 py-1.5 w-8">공종</th>
+                        <th className="border border-slate-600 px-2 py-1.5">품명</th>
+                        <th className="border border-slate-600 px-2 py-1.5">규격</th>
+                        <th className="border border-slate-600 px-2 py-1.5 w-14">수량</th>
+                        <th className="border border-slate-600 px-2 py-1.5 w-10">단위</th>
+                        <th className="border border-slate-600 px-2 py-1.5 w-14">단가ID</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {designItems.map((d) => (
+                        <tr key={d.id} className={!d.enabled ? "bg-slate-100 opacity-50" : "bg-white"}>
+                          <td className="border border-slate-200 px-2 py-1 text-center">
+                            <input type="checkbox" checked={d.enabled} onChange={() => toggleDesignItem(d.id)} className="w-4 h-4" />
+                          </td>
+                          <td className="border border-slate-200 px-2 py-1 text-center font-medium">{d.cat}</td>
+                          <td className="border border-slate-200 px-2 py-1">{d.name}</td>
+                          <td className="border border-slate-200 px-2 py-1 text-slate-500">{d.spec}</td>
+                          <td className="border border-slate-200 px-1 py-1 text-center">
+                            <input type="number" value={d.qty} step="0.1" onChange={(e) => updateDesignQty(d.id, e.target.value)}
+                              className="w-full text-center border rounded px-1 py-0.5 text-xs" />
+                          </td>
+                          <td className="border border-slate-200 px-2 py-1 text-center">{d.unit}</td>
+                          <td className="border border-slate-200 px-2 py-1 text-center text-blue-600">{d.priceId}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            {/* 13열 내역서 */}
+            <section>
+              <SectionTitle num="2" title="설계 내역서" />
+              <p className="text-xs text-slate-500 mt-1 mb-3">단가근거: 2025년 충청북도 일위대가 목록표</p>
+              <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-xs border-collapse" style={{ minWidth: 1100 }}>
+                  <thead>
+                    <tr className="bg-blue-700 text-white">
+                      <th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-10">공종</th>
+                      <th rowSpan={2} className="border border-blue-600 px-2 py-1.5 w-32">품 명</th>
+                      <th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-36">규 격</th>
+                      <th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-10">수량</th>
+                      <th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-8">단위</th>
+                      <th colSpan={2} className="border border-blue-600 px-1 py-1 text-center">합 계</th>
+                      <th colSpan={2} className="border border-blue-600 px-1 py-1 text-center">노 무 비</th>
+                      <th colSpan={2} className="border border-blue-600 px-1 py-1 text-center">재 료 비</th>
+                      <th colSpan={2} className="border border-blue-600 px-1 py-1 text-center">경 비</th>
+                    </tr>
+                    <tr className="bg-blue-600 text-white text-center">
+                      {["단가","금액","단가","금액","단가","금액","단가","금액"].map((t, i) => (
+                        <th key={i} className="border border-blue-500 px-1 py-1">{t}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* 순공사비 */}
+                    <TotalRow label="순 공 사 비" amounts={[sunG, togong.i+gujo.i+pojang.i+budae.i, togong.k+gujo.k+pojang.k+budae.k, togong.m+gujo.m+pojang.m+budae.m]} bg="bg-slate-200" text="text-slate-800" />
+
+                    {/* 1~4 대분류 */}
+                    {[{code:"1.",name:"토공",t:togong},{code:"2.",name:"구조물공",t:gujo},{code:"3.",name:"포장공",t:pojang},{code:"4.",name:"부대공",t:budae}].map(({code,name,t}) => {
+                      const catItems = activeDesign.filter(i => i.cat === code);
+                      if (catItems.length === 0) return null;
+                      return (
+                        <React.Fragment key={code}>
+                          <CatRow code={code} name={name} amounts={[t.g, t.i, t.k, t.m]} />
+                          {catItems.map((item, idx) => {
+                            const p = PRICE_DB[item.priceId] || {};
+                            return <ItemRow key={item.id} item={item} p={p} idx={idx} />;
+                          })}
+                        </React.Fragment>
+                      );
+                    })}
+
+                    {/* 사급자재대 */}
+                    <CatRow code="5." name="사급자재대" amounts={[sagubTotal,0,0,0]} fillClass="bg-orange-50" />
+                    {sagubItems.map((item, idx) => (
+                      <tr key={item.id} className={idx%2===0?"bg-white":"bg-slate-50"}>
+                        <td className="border border-slate-200 px-1 py-1 text-center"></td>
+                        <td className="border border-slate-200 px-2 py-1">{item.name}</td>
+                        <td className="border border-slate-200 px-1 py-1 text-slate-500">{item.spec}</td>
+                        <td className="border border-slate-200 px-1 py-1 text-center">{item.qty}</td>
+                        <td className="border border-slate-200 px-1 py-1 text-center">{item.unit}</td>
+                        <td className="border border-slate-200 px-1 py-1 text-right">{fmt(item.unitPrice)}</td>
+                        <td className="border border-slate-200 px-1 py-1 text-right">{fmt(Math.round(item.qty*item.unitPrice))}</td>
+                        <td colSpan={6} className="border border-slate-200"></td>
+                      </tr>
+                    ))}
+
+                    {/* 관급자재대 */}
+                    <CatRow code="6." name="관급자재대" amounts={[gwangubTotal,0,0,0]} fillClass="bg-red-50" />
+                    {gwangubItems.map((item, idx) => (
+                      <tr key={item.id} className={idx%2===0?"bg-white":"bg-slate-50"}>
+                        <td className="border border-slate-200 px-1 py-1 text-center text-xs">{item.sub}</td>
+                        <td className="border border-slate-200 px-2 py-1">{item.name}</td>
+                        <td className="border border-slate-200 px-1 py-1 text-slate-500">{item.spec}</td>
+                        <td className="border border-slate-200 px-1 py-1 text-center">{item.qty}</td>
+                        <td className="border border-slate-200 px-1 py-1 text-center">{item.unit}</td>
+                        <td className="border border-slate-200 px-1 py-1 text-right">{fmt(item.unitPrice)}</td>
+                        <td className="border border-slate-200 px-1 py-1 text-right">{fmt(Math.round(item.qty*item.unitPrice))}</td>
+                        <td colSpan={6} className="border border-slate-200"></td>
+                      </tr>
+                    ))}
+
+                    {/* 관급수수료 */}
+                    <tr className="bg-red-50 font-bold">
+                      <td colSpan={5} className="border border-slate-300 px-3 py-1.5 text-center text-red-700">관급수수료 (1.5%)</td>
+                      <td className="border border-slate-300"></td>
+                      <td className="border border-slate-300 px-1 py-1.5 text-right text-red-700">{fmt(gwangubFee)}</td>
+                      <td colSpan={6} className="border border-slate-300"></td>
+                    </tr>
+
+                    {/* 총공사비 */}
+                    <TotalRow label="총 공 사 비" amounts={[grandTotal, 0, 0, 0]} bg="bg-slate-800" text="text-white" />
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            {/* 합계 요약 카드 */}
+            <section>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <SumCard label="직접공사비" value={sunG} color="blue" />
+                <SumCard label="사급자재대" value={sagubTotal} color="orange" />
+                <SumCard label="관급자재대" value={gwangubTotal} color="red" />
+                <SumCard label="관급수수료" value={gwangubFee} color="pink" />
+                <SumCard label="총공사비" value={grandTotal} color="slate" bold />
+              </div>
+            </section>
+
+            {/* ② 엑셀 다운로드 (브라우저 생성) */}
+            <section>
+              <SectionTitle num="📊" title="엑셀 다운로드" />
+              <div className="mt-3 flex gap-3 flex-wrap">
+                <button onClick={() => generateDesignExcel(designItems, sagubItems, gwangubItems, FEE_RATE)}
+                  className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 shadow">
+                  📊 설계내역서
+                </button>
+                <button onClick={() => generateQuantityExcel(designItems, sagubItems, gwangubItems, FEE_RATE)}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 shadow">
+                  📋 수량산출서
+                </button>
+                <button onClick={() => generateUnitPriceExcel(designItems)}
+                  className="px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 shadow">
+                  📑 일위대가
+                </button>
+              </div>
+              <p className="text-xs text-slate-400 mt-2">* 브라우저에서 직접 생성 — 서버 불필요, 오프라인에서도 동작</p>
+            </section>
+          </>
+        )}
+
+        {/* 푸터 */}
+        <footer className="border-t border-slate-200 pt-4 pb-6 text-xs text-slate-400 space-y-1">
+          <p>상세 수량산출 근거는 엑셀 파일 참조</p>
+          <p>단가근거: 2025년 충청북도 일위대가 목록표 · 기초 근입 D≥1.0m</p>
+        </footer>
       </div>
-
-      {/* 에러 배너 */}
-      {error && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-3">
-          <div className="max-w-7xl mx-auto flex items-center gap-2 text-sm text-amber-800">
-            <span>⚠️</span><span>{error}</span>
-            <button onClick={()=>setError(null)} className="ml-auto text-amber-500 hover:text-amber-700">✕</button>
-          </div>
-        </div>
-      )}
-
-      {/* 서브헤더 */}
-      <div className="bg-white border-b border-slate-100">
-        <div className="max-w-7xl mx-auto px-4 py-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-3">
-              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-bold rounded">{analysisResult?.bankSide||"분석중"}</span>
-              <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded">{analysisResult?.judgement||"개선복구"}</span>
-              <span className="text-sm text-slate-600">하천 수해복구 설계</span>
-            </div>
-            <div className="flex items-center gap-4 text-xs text-slate-500">
-              <span>직접공사비 <strong className="text-blue-700">{fmt(totals.directTotal)}</strong></span>
-              <span className="text-slate-300">|</span>
-              <span>총공사비 <strong className="text-slate-800 text-sm">{fmt(totals.grandTotal)}원</strong></span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 본문 */}
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        {view === "analysis"
-          ? <AnalysisView totals={totals} structSpecs={structSpecs} setStructSpecs={setStructSpecs} editMode={editMode} damageItems={damageItems} setDamageItems={setDamageItems} analysisResult={analysisResult} imagePreview={imagePreview} imageInputRef={imageInputRef} handleImageUpload={handleImageUpload} onImageClick={()=>setShowImageModal(true)}/>
-          : <EstimateView items={items} setItems={setItems} sagub={sagub} setSagub={setSagub} gwangub={gwangub} setGwangub={setGwangub} totals={totals} editMode={editMode}/>
-        }
-      </div>
-
-      {/* 사진 모달 */}
-      {showImageModal && imagePreview && imagePreview !== "loaded" && (
-        <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4" onClick={()=>setShowImageModal(false)}>
-          <button onClick={()=>setShowImageModal(false)} className="absolute top-4 right-4 text-white text-3xl font-bold hover:text-red-400 z-[101]">✕</button>
-          <img src={imagePreview} alt="현장사진 확대" className="max-w-full max-h-full object-contain rounded-lg" onClick={e=>e.stopPropagation()}/>
-        </div>
-      )}
-
-      <div className="text-center text-xs text-slate-400 py-6 border-t border-slate-100">
-        <p>상세 수량산출 근거는 엑셀 파일 참조</p>
-        <p className="mt-1">소규모주민숙원사업 v7.2 — 2025년 단가목록 적용 (충청북도)</p>
-      </div>
-      </>
-      )}
     </div>
   );
 }
+
+/* ===== Sub Components ===== */
+
+function SectionTitle({ num, title }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="bg-blue-600 text-white text-xs font-bold w-6 h-6 rounded flex items-center justify-center">{num}</span>
+      <h2 className="text-lg font-bold text-slate-800">{title}</h2>
+    </div>
+  );
+}
+
+function InfoCard({ title, color, children }) {
+  const styles = { blue: "bg-blue-50 border-blue-200 text-blue-700", red: "bg-red-50 border-red-200 text-red-700" };
+  const s = styles[color];
+  return (
+    <div className={`${s.split(" ").slice(0,2).join(" ")} border rounded-lg p-4`}>
+      <h4 className={`font-bold ${s.split(" ")[2]} text-sm mb-2`}>{title}</h4>
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  );
+}
+
+function InfoRow({ label, value, highlight }) {
+  return (
+    <div className="flex justify-between text-sm">
+      <span className="text-slate-500">{label}</span>
+      <span className={highlight ? "font-bold text-red-600" : "font-medium text-slate-800"}>{value}</span>
+    </div>
+  );
+}
+
+function StructCard({ title, specs, color }) {
+  const c = { blue:{bg:"bg-blue-50",border:"border-blue-200",title:"text-blue-700",dot:"bg-blue-400"},
+    red:{bg:"bg-red-50",border:"border-red-200",title:"text-red-700",dot:"bg-red-400"},
+    amber:{bg:"bg-amber-50",border:"border-amber-200",title:"text-amber-700",dot:"bg-amber-400"} }[color];
+  return (
+    <div className={`${c.bg} border ${c.border} rounded-lg p-4`}>
+      <h4 className={`font-bold ${c.title} text-sm mb-3`}>{title}</h4>
+      <div className="space-y-2">
+        {specs.map((s, i) => (
+          <div key={i} className="flex items-start gap-2 text-sm">
+            <span className={`${c.dot} w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0`}></span>
+            <span className="text-slate-500 w-14 flex-shrink-0">{s.k}</span>
+            <span className="font-medium text-slate-800">{s.v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TotalRow({ label, amounts, bg, text }) {
+  return (
+    <tr className={`${bg} font-bold`}>
+      <td colSpan={5} className={`border border-slate-300 px-3 py-1.5 text-center ${text}`}>{label}</td>
+      <td className="border border-slate-300"></td>
+      <td className={`border border-slate-300 px-1 py-1.5 text-right ${text} text-xs`}>{fmt(amounts[0])}</td>
+      <td className="border border-slate-300"></td>
+      <td className={`border border-slate-300 px-1 py-1.5 text-right ${text} text-xs`}>{amounts[1] ? fmt(amounts[1]) : ""}</td>
+      <td className="border border-slate-300"></td>
+      <td className={`border border-slate-300 px-1 py-1.5 text-right ${text} text-xs`}>{amounts[2] ? fmt(amounts[2]) : ""}</td>
+      <td className="border border-slate-300"></td>
+      <td className={`border border-slate-300 px-1 py-1.5 text-right ${text} text-xs`}>{amounts[3] ? fmt(amounts[3]) : ""}</td>
+    </tr>
+  );
+}
+
+function CatRow({ code, name, amounts, fillClass }) {
+  const bg = fillClass || "bg-blue-50";
+  return (
+    <tr className={`${bg} font-bold`}>
+      <td className="border border-slate-300 px-1 py-1 text-center text-blue-700 text-xs">{code}</td>
+      <td className="border border-slate-300 px-2 py-1 text-blue-700">{name}</td>
+      <td className="border border-slate-300"></td>
+      <td className="border border-slate-300"></td>
+      <td className="border border-slate-300"></td>
+      <td className="border border-slate-300"></td>
+      <td className="border border-slate-300 px-1 py-1 text-right text-blue-700 text-xs">{fmt(amounts[0])}</td>
+      <td className="border border-slate-300"></td>
+      <td className="border border-slate-300 px-1 py-1 text-right text-xs">{amounts[1] ? fmt(amounts[1]) : ""}</td>
+      <td className="border border-slate-300"></td>
+      <td className="border border-slate-300 px-1 py-1 text-right text-xs">{amounts[2] ? fmt(amounts[2]) : ""}</td>
+      <td className="border border-slate-300"></td>
+      <td className="border border-slate-300 px-1 py-1 text-right text-xs">{amounts[3] ? fmt(amounts[3]) : ""}</td>
+    </tr>
+  );
+}
+
+function ItemRow({ item, p, idx }) {
+  const q = item.qty;
+  return (
+    <tr className={idx%2===0 ? "bg-white" : "bg-slate-50"}>
+      <td className="border border-slate-200 px-1 py-1 text-center"></td>
+      <td className="border border-slate-200 px-2 py-1">{item.name}</td>
+      <td className="border border-slate-200 px-1 py-1 text-slate-500 text-xs">{item.spec}</td>
+      <td className="border border-slate-200 px-1 py-1 text-center">{q}</td>
+      <td className="border border-slate-200 px-1 py-1 text-center">{item.unit}</td>
+      <td className="border border-slate-200 px-1 py-1 text-right">{fmt(p.total||0)}</td>
+      <td className="border border-slate-200 px-1 py-1 text-right">{fmt(Math.round(q*(p.total||0)))}</td>
+      <td className="border border-slate-200 px-1 py-1 text-right">{fmt(p.labor||0)}</td>
+      <td className="border border-slate-200 px-1 py-1 text-right">{fmt(Math.round(q*(p.labor||0)))}</td>
+      <td className="border border-slate-200 px-1 py-1 text-right">{fmt(p.material||0)}</td>
+      <td className="border border-slate-200 px-1 py-1 text-right">{fmt(Math.round(q*(p.material||0)))}</td>
+      <td className="border border-slate-200 px-1 py-1 text-right">{fmt(p.expense||0)}</td>
+      <td className="border border-slate-200 px-1 py-1 text-right">{fmt(Math.round(q*(p.expense||0)))}</td>
+    </tr>
+  );
+}
+
+function SumCard({ label, value, color, bold }) {
+  const styles = {
+    blue: "bg-blue-50 border-blue-200 text-blue-700",
+    orange: "bg-orange-50 border-orange-200 text-orange-600",
+    red: "bg-red-50 border-red-200 text-red-600",
+    pink: "bg-pink-50 border-pink-200 text-pink-600",
+    slate: "bg-slate-800 border-slate-700 text-white",
+  };
+  return (
+    <div className={`rounded-lg border p-3 ${styles[color]}`}>
+      <p className="text-xs opacity-75">{label}</p>
+      <p className={`${bold ? "text-lg" : "text-sm"} font-bold mt-0.5`}>{fmt(value)}원</p>
+    </div>
+  );
+}
+
+/* ===== 설계 단면도 SVG ===== */
+function CrossSectionSVG() {
+  return (
+    <svg viewBox="0 0 600 350" className="w-full max-w-xl border border-slate-200 rounded-lg bg-slate-50">
+      {/* 지반선 */}
+      <line x1="30" y1="250" x2="570" y2="250" stroke="#78716c" strokeWidth="2" strokeDasharray="8,4" />
+      <text x="575" y="254" fontSize="10" fill="#78716c" textAnchor="start">G.L</text>
+
+      {/* 잡석 기초 */}
+      <rect x="120" y="250" width="250" height="30" fill="#d6d3d1" stroke="#78716c" strokeWidth="1" />
+      <text x="245" y="270" fontSize="9" fill="#44403c" textAnchor="middle">잡석기초 T=0.5m</text>
+
+      {/* 부직포 (잡석 아래) */}
+      <rect x="115" y="280" width="260" height="5" fill="#bfdbfe" stroke="#3b82f6" strokeWidth="0.5" />
+      <text x="380" y="285" fontSize="8" fill="#3b82f6">부직포</text>
+
+      {/* 기초 콘크리트 */}
+      <rect x="130" y="190" width="230" height="60" fill="#e5e7eb" stroke="#374151" strokeWidth="1.5" />
+      <text x="245" y="225" fontS
