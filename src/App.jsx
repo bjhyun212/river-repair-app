@@ -379,119 +379,127 @@ ${currentDamage || "(없음)"}
     const enabledDmg=damage.filter(d=>d.enabled);
     if(enabledDmg.length===0){alert("피해현황에 항목이 없습니다");return}
 
-    // 피해현황 키워드 → 설계내역서 세부공종 자동 매핑
-    const newItems=[];
-    let id=1;
-    const add=(cat,name,spec,unit,qty,priceId)=>newItems.push({id:id++,cat,name,spec,unit,qty:Math.round(qty*10)/10,priceId,labor:0,material:0,expense:0,enabled:true});
+    // ── Step 1: 피해현황 분류 ──
+    const structItems=[],paveItems=[],slopeItems=[],drainItems=[],etcItems=[];
+    enabledDmg.forEach(d=>{
+      if(d.item.match(/석축|옹벽|RC|역.*T|호안|콘크리트.*벽|기초|구조물/i)) structItems.push(d);
+      else if(d.item.match(/포장|도로|아스팔트/)) paveItems.push(d);
+      else if(d.item.match(/사면|녹화|법면/)) slopeItems.push(d);
+      else if(d.item.match(/측구|배수|수로|산마루|플륨|흄관|관로/)) drainItems.push(d);
+      else etcItems.push(d);
+    });
+    const allStructQty=structItems.reduce((s,d)=>s+d.qty,0);
 
-    // 피해현황에서 수량 추출
-    const find=(keyword)=>enabledDmg.find(d=>d.item.includes(keyword));
-    const qtyOf=(keyword,fallback=0)=>{const d=find(keyword);return d?d.qty:fallback};
+    // ── Step 2: 소분류별 세부물량 산출 (수량산출서용 basis 포함) ──
+    // {priceId, cat, name, spec, unit, qty, basis} 형태로 수집 후 합산
+    const raw=[];  // 개별 물량 (합산 전)
+    const push=(cat,name,spec,unit,qty,priceId,basis)=>{if(qty>0)raw.push({cat,name,spec,unit,qty:Math.round(qty*10)/10,priceId,basis})};
 
-    // 토공 (공통)
-    const hasStruct=enabledDmg.some(d=>d.item.match(/석축|옹벽|호안|콘크리트|기초|구조물/));
-    const hasPave=enabledDmg.some(d=>d.item.match(/포장|도로|아스팔트/));
-    const hasSlope=enabledDmg.some(d=>d.item.match(/사면|녹화|법면/));
-    const hasDirt=enabledDmg.some(d=>d.item.match(/굴착|사토|토사|잔해/));
-    const totalStructQty=enabledDmg.filter(d=>d.item.match(/석축|옹벽|호안|콘크리트|기초/)).reduce((s,d)=>s+d.qty,0);
-
-    // 1. 토공
-    if(hasStruct||hasDirt){
-      const tQty=qtyOf("토사")||qtyOf("굴착")||qtyOf("사토")||Math.round(totalStructQty*2);
-      if(tQty>0){
-        add("1.","표토제거","T=20CM, 굴삭기0.7㎥","m²",Math.round(tQty*0.3)||10,"#.22");
-        add("1.","흙깍기","보통토사,소규모,굴착기1.0㎥","m³",Math.round(tQty*0.3)||10,"#.28");
-        add("1.","구조물터파기","육상토사,기계100%","m³",qtyOf("기초")||qtyOf("콘크리트")||Math.round(totalStructQty*0.5)||20,"#.57");
-      }
+    // 1. 토공 (공통)
+    if(allStructQty>0){
+      const digQty=etcItems.find(d=>d.item.match(/굴착|토사|사토/))?.qty||Math.round(allStructQty*0.6);
+      push("1.","표토제거","T=20CM, 굴삭기0.7㎥","m²",Math.round(digQty*0.4)||10,"#.22","공통 표토제거");
+      push("1.","흙깍기","보통토사,소규모,굴착기1.0㎥","m³",Math.round(digQty*0.3)||10,"#.28","공통 토사굴착");
+      const satoQty=etcItems.find(d=>d.item.match(/사토/))?.qty||Math.round(allStructQty*1.2);
+      push("1.","사토운반","토사,L=5.0KM","m³",satoQty,"#.127","잔토 사토운반");
     }
 
-    // 2. 구조물공
-    enabledDmg.forEach(d=>{
+    // 2. 구조물공 — 소분류별 세부 산출
+    let sNo=0;
+    structItems.forEach(d=>{
+      sNo++;
+      const label=d.item;
       if(d.item.match(/석축/)){
-        add("2.","석축쌓기",d.item.includes("메")?"메쌓기,T=35cm이하":"찰쌓기,T=35cm이하","m²",d.qty,"#.155");
+        const A=d.qty, L=Math.round(A/3)||10;
+        push("2.","구조물터파기","육상토사,기계100%","m³",Math.round(A*0.4),"#.57",`${label}: 폭×깊이×L=${A*0.4}㎥`);
+        push("2.","기초지정","잡석","m³",Math.round(L*0.06*10)/10||2,"#.77",`${label}: 잡석기초 L${L}m×0.3×0.2`);
+        push("2.","석축쌓기","찰쌓기,T=35cm이하","m²",A,"#.155",`${label}: H×L=${A}㎡`);
+        push("2.","콘크리트양생","습윤양생","m²",A,"#.276",`${label}: 표면적=${A}㎡`);
+        push("1.","뒤채움 및 다짐","소형장비","m³",Math.round(A*0.3),"#.68",`${label}: 배면 뒤채움`);
       }
-      if(d.item.match(/옹벽|RC.*벽|역.*T/i)){
-        add("2.","레미콘타설(펌프차)","철근(S:8-12cm),TYPE-Ⅱ","m³",d.qty,"#.193");
-        add("2.","합판거푸집","(4회) 보통","m²",Math.round(d.qty*0.8),"#.204");
-        add("2.","철근가공 및 조립","TYPE-1-1","ton",Math.round(d.qty*0.05*10)/10||0.5,"#.216");
+      else if(d.item.match(/옹벽|RC.*벽|역.*T/i)){
+        const isVol=d.unit.includes("³");
+        const vol=isVol?d.qty:Math.round(d.qty*0.12);
+        const area=isVol?Math.round(d.qty*6.5):d.qty;
+        push("2.","구조물터파기","육상토사,기계100%","m³",Math.round(vol*3)||20,"#.57",`${label}: 터파기 ${vol}×3=${vol*3}㎥`);
+        push("2.","기초지정","잡석","m³",Math.round(vol*0.7)||5,"#.77",`${label}: 잡석 ${vol}×0.7`);
+        push("2.","레미콘타설(펌프차)","철근(S:8-12cm),TYPE-Ⅱ","m³",vol||10,"#.193",`${label}: 본체 ${vol}㎥`);
+        push("2.","합판거푸집","(4회) 보통","m²",area||40,"#.204",`${label}: 양면 ${area}㎡`);
+        push("2.","철근가공 및 조립","TYPE-1-1","ton",Math.round(vol*0.1*10)/10||0.5,"#.216",`${label}: ${vol}㎥×100kg/㎥`);
+        push("2.","콘크리트양생","습윤양생","m²",area||40,"#.276",`${label}: 표면적 ${area}㎡`);
+        push("1.","뒤채움 및 다짐","소형장비","m³",Math.round(vol*2)||15,"#.68",`${label}: 배면 ${vol}×2`);
       }
-      if(d.item.match(/기초.*콘크리트|콘크리트.*기초|RC.*기초/)){
-        add("2.","레미콘타설(펌프차)","철근(S:8-12cm),TYPE-Ⅱ","m³",d.qty,"#.193");
-        add("2.","합판거푸집","(4회) 보통","m²",Math.round(d.qty*0.8),"#.204");
-        add("2.","철근가공 및 조립","TYPE-1-1","ton",Math.round(d.qty*0.05*10)/10||0.5,"#.216");
-      }
-      if(d.item.match(/잡석/)){
-        add("2.","기초지정","잡석","m³",d.qty,"#.77");
+      else {
+        push("2.","구조물터파기","육상토사,기계100%","m³",Math.round(d.qty*0.5)||10,"#.57",`${label}: 터파기`);
+        push("2.","레미콘타설(펌프차)","철근(S:8-12cm),TYPE-Ⅱ","m³",d.qty,"#.193",`${label}: ${d.qty}㎥`);
+        push("2.","콘크리트양생","습윤양생","m²",d.qty,"#.276",`${label}: ${d.qty}㎡`);
       }
     });
 
-    // 콘크리트양생 (구조물이 있으면)
-    if(hasStruct){
-      const structArea=enabledDmg.filter(d=>d.item.match(/석축|옹벽|기초|콘크리트/)).reduce((s,d)=>s+(d.unit.includes("²")?d.qty:d.qty*2),0);
-      if(structArea>0) add("2.","콘크리트양생","습윤양생","m²",Math.round(structArea),"#.276");
-    }
+    // 배수공 (측구 등)
+    drainItems.forEach(d=>{
+      const L=d.qty, label=d.item;
+      push("2.","구조물터파기","육상토사,기계100%","m³",Math.round(L*0.3)||5,"#.57",`${label}: ${L}m×0.3`);
+      push("2.","기초지정","잡석","m³",Math.round(L*0.06*10)/10||1,"#.77",`${label}: ${L}m×0.06`);
+      push("2.","레미콘타설(펌프차)","무근(S:8-12cm),TYPE-Ⅱ","m³",Math.round(L*0.15*10)/10||2,"#.185",`${label}: ${L}m×0.15`);
+      push("2.","합판거푸집","(4회) 보통","m²",Math.round(L*0.6)||10,"#.204",`${label}: ${L}m×0.6`);
+      push("2.","콘크리트양생","습윤양생","m²",Math.round(L*0.6)||10,"#.276",`${label}: ${L}m×0.6`);
+      push("1.","뒤채움 및 다짐","소형장비","m³",Math.round(L*0.2)||3,"#.68",`${label}: ${L}m×0.2`);
+    });
+
+    // 되메우기 (공통)
+    if(allStructQty>0) push("1.","되메우기 및 다짐","소형장비","m³",Math.round(allStructQty*0.2)||10,"#.70","잔여 되메우기");
 
     // 3. 포장공
-    enabledDmg.filter(d=>d.item.match(/포장|도로|아스팔트/)).forEach(d=>{
-      add("3.","절삭후아스팔트덧씌우기","B-Type(1회절삭,1회포장)","m²",d.qty,"#.326");
+    paveItems.forEach(d=>{
+      push("3.","절삭후아스팔트덧씌우기","B-Type(1회절삭,1회포장)","m²",d.qty,"#.326",`${d.item}: ${d.qty}㎡`);
+    });
+
+    // 사면
+    slopeItems.forEach(d=>{
+      push("1.","절토사면 녹화","T=10㎝","m²",d.qty,"#.87",`${d.item}: ${d.qty}㎡`);
     });
 
     // 4. 부대공
-    if(hasStruct){
-      const basisArea=enabledDmg.filter(d=>d.item.match(/석축|옹벽|기초|잡석/)).reduce((s,d)=>s+d.qty,0);
-      add("4.","부직포설치","","m²",Math.round(basisArea*1.2)||30,"#.280");
-      add("4.","비닐깔기","","m²",Math.round(basisArea*0.5)||20,"#.281");
+    const bArea=allStructQty+drainItems.reduce((s,d)=>s+d.qty,0);
+    if(bArea>0){
+      push("4.","부직포설치","","m²",Math.round(bArea*1.0)||30,"#.280","구조물+배수 하부·배면");
+      push("4.","비닐깔기","","m²",Math.round(bArea*0.4)||15,"#.281","기초 하부 방습");
     }
-    if(hasDirt){
-      const sato=qtyOf("토사")||qtyOf("사토")||qtyOf("굴착")||Math.round(totalStructQty*1.5);
-      if(sato>0) add("1.","사토운반","토사,L=5.0KM","m³",sato,"#.127");
+    if(allStructQty>0||paveItems.length>0){
+      push("4.","물푸기","","hr",24,"#.282","공사기간 중 물푸기");
+      push("4.","교통통제및안전처리","500M미만","일",5,"#.481","공사기간 5일");
     }
-    if(hasStruct||hasPave){
-      add("4.","물푸기","","hr",24,"#.282");
-      add("4.","교통통제및안전처리","500M미만","일",5,"#.481");
-    }
-
-    // 뒤채움/되메우기
-    if(hasStruct){
-      add("1.","뒤채움 및 다짐","소형장비","m³",Math.round(totalStructQty*0.4)||15,"#.68");
-      add("1.","되메우기 및 다짐","소형장비","m³",Math.round(totalStructQty*0.2)||10,"#.70");
-    }
-
-    // 사면
-    enabledDmg.filter(d=>d.item.match(/사면|녹화|법면/)).forEach(d=>{
-      add("1.","절토사면 녹화","T=10㎝","m²",d.qty,"#.87");
+    etcItems.filter(d=>d.item.match(/낙석/)).forEach(d=>{
+      push("4.","낙석방지망","철망설치(기계식)","m²",d.qty,"#.453",`${d.item}: ${d.qty}㎡`);
+    });
+    etcItems.filter(d=>!d.item.match(/굴착|사토|토사|잔해|낙석/)).forEach(d=>{
+      push("4.",d.item,"피해현황 직접반영",d.unit,d.qty,"",d.basis||"");
     });
 
-    // 낙석방지
-    enabledDmg.filter(d=>d.item.match(/낙석/)).forEach(d=>{
-      add("4.","낙석방지망","철망설치(기계식)","m²",d.qty,"#.453");
+    // ── Step 3: 동일 공종(priceId+name) 합산 → 내역서용 items 생성 ──
+    const merged=new Map();
+    raw.forEach(r=>{
+      const key=r.priceId?r.priceId:`${r.cat}_${r.name}`;
+      if(merged.has(key)){
+        const m=merged.get(key);
+        m.qty=Math.round((m.qty+r.qty)*10)/10;
+        m.basis+=`\n${r.basis}`;
+      } else {
+        merged.set(key,{...r});
+      }
     });
 
-    // 측구/배수/수로/관로
-    enabledDmg.filter(d=>d.item.match(/측구|배수|수로|산마루/)).forEach(d=>{
-      add("2.","레미콘타설(펌프차)","무근(S:8-12cm),TYPE-Ⅱ","m³",Math.round(d.qty*0.15*10)/10||1,"#.185");
-      add("2.","합판거푸집","(4회) 보통","m²",Math.round(d.qty*0.6)||10,"#.204");
-      add("1.","구조물터파기","육상토사,기계100%","m³",Math.round(d.qty*0.3)||5,"#.57");
-    });
+    let id=1;
+    const newItems=[...merged.values()].map(r=>({
+      id:id++, cat:r.cat, name:r.name, spec:r.spec, unit:r.unit,
+      qty:r.qty, priceId:r.priceId, basis:r.basis,
+      labor:0, material:0, expense:0, enabled:true
+    }));
 
-    // 플륨관/흄관
-    enabledDmg.filter(d=>d.item.match(/플륨|흄관|관로|파이프/)).forEach(d=>{
-      add("2.","플륨관설치",d.qty>20?"500~700kg":"300~500kg","m",d.qty,d.qty>20?"#.93":"#.92");
-    });
-
-    // ★ 매칭되지 않은 항목 → 직접입력 공종으로 추가 (빠뜨림 방지)
-    const matched = new Set();
-    enabledDmg.forEach(d=>{
-      if(d.item.match(/석축|옹벽|RC|역.*T|기초.*콘|콘크리트.*기초|잡석|포장|도로|아스팔트|사면|녹화|법면|낙석|측구|배수|수로|산마루|플륨|흄관|관로|파이프|굴착|사토|토사|잔해/i)) matched.add(d.id);
-    });
-    enabledDmg.filter(d=>!matched.has(d.id)).forEach(d=>{
-      add("4.",d.item,`피해현황 직접반영 (${d.basis||""})`,d.unit,d.qty,"");
-    });
-
-    // items가 비어있거나, 피해현황 기반으로 새로 생성
     _nid=id+200;
     setItems(newItems);
-    alert(`피해현황 ${enabledDmg.length}개 항목 → 설계내역서 ${newItems.length}개 공종 생성 완료!`);
+    alert(`피해현황 ${enabledDmg.length}개 항목 → 설계내역서 ${newItems.length}개 공종 (합산)\n\n수량산출서에서 소분류별 상세 근거를 확인하세요.`);
     setView("estimate"); window.scrollTo(0,0);
   },[damage]);
   const handleSave=useCallback(async()=>{const json=JSON.stringify({v:"8.3",damage,items,chatLog,projName,projLoc,at:new Date().toISOString()},null,2);const blob=new Blob([json],{type:"application/json"});if(window.showSaveFilePicker){try{const handle=await window.showSaveFilePicker({suggestedName:`소규모주민숙원_${new Date().toISOString().slice(0,10)}.json`,types:[{description:"JSON 파일",accept:{"application/json":[".json"]}}]});const writable=await handle.createWritable();await writable.write(blob);await writable.close();alert("저장 완료!")}catch(e){if(e.name!=="AbortError")alert("저장 오류: "+e.message)}}else{const fn=window.prompt("파일명:",`소규모주민숙원_${new Date().toISOString().slice(0,10)}`);if(!fn)return;const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${fn}.json`;a.click();URL.revokeObjectURL(a.href)}},[damage,items,chatLog,projName,projLoc]);
