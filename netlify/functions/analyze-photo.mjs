@@ -1,5 +1,6 @@
 // netlify/functions/analyze-photo.mjs
 // AI 분석 후 서버에서 2025년 단가를 강제 적용
+// v2: 디버깅 로그 추가
 
 const PRICE_DB = {
   "#.19":{name:"표토제거(답구간)",spec:"불도저19ton,T=20CM",unit:"㎡",labor:225,material:144,expense:135},
@@ -74,17 +75,33 @@ function applyPrices(data) {
 }
 
 export default async (req) => {
-  if (req.method !== 'POST') return new Response(JSON.stringify({error:'POST only'}),{status:405});
+  console.log('[analyze-photo] 함수 시작');
+
+  if (req.method !== 'POST') {
+    console.log('[analyze-photo] POST가 아님:', req.method);
+    return new Response(JSON.stringify({error:'POST only'}),{status:405});
+  }
 
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_API_KEY) {
+    console.log('[analyze-photo] API KEY 없음!');
     return new Response(JSON.stringify({error:'ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.'}),
       {status:500, headers:{'Content-Type':'application/json'}});
   }
+  console.log('[analyze-photo] API KEY 존재, 길이:', ANTHROPIC_API_KEY.length);
 
   try {
+    console.log('[analyze-photo] body 파싱 시작');
     const body = await req.json();
+    console.log('[analyze-photo] body 파싱 완료, image 길이:', body.image?.length || 0);
+
     const { image, siteName, location } = body;
+
+    if (!image || image.length < 100) {
+      console.log('[analyze-photo] 이미지 데이터 없거나 너무 짧음');
+      return new Response(JSON.stringify({error:'이미지 데이터가 없거나 너무 짧습니다.'}),
+        {status:400, headers:{'Content-Type':'application/json'}});
+    }
 
     // 사용 가능한 단가ID 목록을 AI에게 전달
     const priceList = Object.entries(PRICE_DB)
@@ -134,6 +151,21 @@ ${priceList}
   }
 }`;
 
+    console.log('[analyze-photo] Claude API 호출 시작');
+    const apiBody = {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } },
+          { type: 'text', text: `현장명: ${siteName||'미지정'}\n위치: ${location||'미지정'}\n\n사진 분석 후 설계물량을 JSON으로 반환하세요. priceId는 반드시 단가목록의 #.번호를 사용하세요.` },
+        ],
+      }],
+    };
+    console.log('[analyze-photo] API body 크기:', JSON.stringify(apiBody).length, 'bytes');
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -141,40 +173,41 @@ ${priceList}
         'x-api-key': ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } },
-            { type: 'text', text: `현장명: ${siteName||'미지정'}\n위치: ${location||'미지정'}\n\n사진 분석 후 설계물량을 JSON으로 반환하세요. priceId는 반드시 단가목록의 #.번호를 사용하세요.` },
-          ],
-        }],
-      }),
+      body: JSON.stringify(apiBody),
     });
+
+    console.log('[analyze-photo] Claude API 응답 status:', response.status);
 
     if (!response.ok) {
       const errText = await response.text();
+      console.log('[analyze-photo] Claude API 에러:', errText.substring(0, 500));
       return new Response(JSON.stringify({error:`Claude API 오류: ${response.status}`, detail:errText}),
         {status:500, headers:{'Content-Type':'application/json'}});
     }
 
     const data = await response.json();
     const text = data.content.map(c => c.text || '').join('');
+    console.log('[analyze-photo] Claude 응답 길이:', text.length);
+
     let jsonStr = text.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
 
     let parsed;
     try { parsed = JSON.parse(jsonStr); }
-    catch(e) { return new Response(JSON.stringify({error:'JSON 파싱 실패',raw:text}),
-      {status:200,headers:{'Content-Type':'application/json'}}); }
+    catch(e) {
+      console.log('[analyze-photo] JSON 파싱 실패:', e.message);
+      console.log('[analyze-photo] 원본 텍스트:', text.substring(0, 300));
+      return new Response(JSON.stringify({error:'JSON 파싱 실패',raw:text.substring(0,1000)}),
+        {status:200,headers:{'Content-Type':'application/json'}});
+    }
 
     // 서버에서 2025년 단가 강제 적용
     const result = applyPrices(parsed);
+    console.log('[analyze-photo] 성공! 공종 수:', 
+      Object.values(result.items||{}).flat().length);
 
     return new Response(JSON.stringify(result),{headers:{'Content-Type':'application/json'}});
   } catch(err) {
+    console.log('[analyze-photo] 치명적 에러:', err.message, err.stack);
     return new Response(JSON.stringify({error:err.message}),{status:500,headers:{'Content-Type':'application/json'}});
   }
 };
