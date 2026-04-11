@@ -172,13 +172,43 @@ function StructCard({ title, specs, color }) {
 }
 
 // ═══════════════ AI 분석 화면 ═══════════════
-function AnalysisView({ totals, structSpecs, setStructSpecs, editMode, damageItems, setDamageItems }) {
+function AnalysisView({ totals, structSpecs, setStructSpecs, editMode, damageItems, setDamageItems, imagePreview, imageInputRef, handleImageUpload, onImageClick }) {
   const toggleDamage = (id) => setDamageItems(p => p.map(d => d.id === id ? { ...d, enabled: !d.enabled } : d));
   const updateDamage = (id, field, val) => setDamageItems(p => p.map(d => d.id !== id ? d : { ...d, [field]: field === "qty" ? parseFloat(val) || 0 : val }));
   const addDamage = () => { const mx = Math.max(...damageItems.map(d => d.id), 0); setDamageItems(p => [...p, { id: mx + 1, name: "새 항목", basis: "", qty: 0, unit: "㎡", enabled: true }]); };
 
   return (
     <div className="space-y-6">
+      {/* 현장 사진 */}
+      <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+        <SectionTitle num="0" title="현장 사진" />
+        <div className="mt-4">
+          {imagePreview ? (
+            <div className="space-y-3">
+              <div className="relative cursor-pointer group" onClick={onImageClick}>
+                <img src={imagePreview} alt="현장사진" className="w-full max-h-80 object-contain rounded-lg border border-slate-200" />
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all rounded-lg flex items-center justify-center">
+                  <span className="opacity-0 group-hover:opacity-100 text-white text-sm font-medium bg-black/50 px-3 py-1.5 rounded-lg transition-all">🔍 클릭하여 확대</span>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={()=>imageInputRef.current?.click()} className="px-3 py-1.5 bg-slate-200 text-slate-700 text-xs rounded-lg hover:bg-slate-300 font-medium">📷 사진 변경</button>
+              </div>
+              <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+            </div>
+          ) : (
+            <div>
+              <div onClick={()=>imageInputRef.current?.click()} className="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-all">
+                <div className="text-4xl mb-3">📷</div>
+                <p className="text-sm font-medium text-slate-600">현장 피해 사진을 첨부하세요</p>
+                <p className="text-xs text-slate-400 mt-1">클릭하여 파일 선택 (JPG, PNG)</p>
+              </div>
+              <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+            </div>
+          )}
+        </div>
+      </section>
+
       {/* 종합 분석 */}
       <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
         <SectionTitle num="1" title="종합 분석" />
@@ -370,8 +400,18 @@ export default function App() {
   const [structSpecs, setStructSpecs] = useState(defaultStructSpecs);
   const [damageItems, setDamageItems] = useState(defaultDamageItems);
   const [editMode, setEditMode] = useState(false);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [showImageModal, setShowImageModal] = useState(false);
   const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
   const totals = calcTotals(items, sagub, gwangub);
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setImagePreview(ev.target.result);
+    reader.readAsDataURL(file); e.target.value = "";
+  };
 
   const saveToFile = () => {
     const data = JSON.stringify({ items, sagub, gwangub, structSpecs, damageItems, savedAt: new Date().toISOString() }, null, 2);
@@ -434,10 +474,18 @@ export default function App() {
       {/* 본문 */}
       <div className="max-w-7xl mx-auto px-4 py-6">
         {view === "analysis"
-          ? <AnalysisView totals={totals} structSpecs={structSpecs} setStructSpecs={setStructSpecs} editMode={editMode} damageItems={damageItems} setDamageItems={setDamageItems} />
+          ? <AnalysisView totals={totals} structSpecs={structSpecs} setStructSpecs={setStructSpecs} editMode={editMode} damageItems={damageItems} setDamageItems={setDamageItems} imagePreview={imagePreview} imageInputRef={imageInputRef} handleImageUpload={handleImageUpload} onImageClick={()=>setShowImageModal(true)} />
           : <EstimateView items={items} setItems={setItems} sagub={sagub} setSagub={setSagub} gwangub={gwangub} setGwangub={setGwangub} totals={totals} editMode={editMode} />
         }
       </div>
+
+      {/* 사진 전체화면 모달 */}
+      {showImageModal && imagePreview && (
+        <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4" onClick={()=>setShowImageModal(false)}>
+          <button onClick={()=>setShowImageModal(false)} className="absolute top-4 right-4 text-white text-3xl font-bold hover:text-red-400 z-[101]">✕</button>
+          <img src={imagePreview} alt="현장사진 확대" className="max-w-full max-h-full object-contain rounded-lg" onClick={e=>e.stopPropagation()} />
+        </div>
+      )}
 
       <div className="text-center text-xs text-slate-400 py-6 border-t border-slate-100">
         <p>상세 수량산출 근거는 엑셀 파일 참조</p>
