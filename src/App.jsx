@@ -125,6 +125,38 @@ function InfoRow({label,value,highlight}){return(<div className="flex justify-be
 function SumCard({label,value,color,bold}){const c={blue:"bg-blue-50 border-blue-200 text-blue-700",orange:"bg-orange-50 border-orange-200 text-orange-600",red:"bg-red-50 border-red-200 text-red-600",pink:"bg-pink-50 border-pink-200 text-pink-600",slate:"bg-slate-800 border-slate-700 text-white"};return(<div className={`rounded-lg border p-3 ${c[color]}`}><p className="text-xs opacity-75">{label}</p><p className={`${bold?"text-lg":"text-sm"} font-bold mt-1`}>{fmt(value)}원</p></div>);}
 function StructCard({title,specs,color}){const c={blue:{bg:"bg-blue-50",border:"border-blue-200",title:"text-blue-700",dot:"bg-blue-400"},red:{bg:"bg-red-50",border:"border-red-200",title:"text-red-700",dot:"bg-red-400"},amber:{bg:"bg-amber-50",border:"border-amber-200",title:"text-amber-700",dot:"bg-amber-400"}}[color];return(<div className={`${c.bg} border ${c.border} rounded-lg p-5`}><h4 className={`font-bold ${c.title} text-sm mb-4`}>{title}</h4><div className="space-y-2.5">{specs.map((s,i)=>(<div key={i} className="flex items-start gap-2 text-sm"><span className={`${c.dot} w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0`}/><span className="text-slate-500 w-16 flex-shrink-0">{s.k}</span><span className="font-medium text-slate-800">{s.v}</span></div>))}</div></div>);}
 
+function ExcelButton({ label, endpoint, items, sagub, gwangub, totals }) {
+  const [loading, setLoading] = useState(false);
+  const handleDownload = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/.netlify/functions/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items, sagub, gwangub, totals }),
+      });
+      if (!res.ok) throw new Error(`서버 오류: ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const names = { "generate-excel":"설계내역서", "generate-quantity":"수량산출서", "generate-unitprice":"일위대가" };
+      a.download = `${names[endpoint]||endpoint}_${new Date().toISOString().slice(0,10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`엑셀 생성 실패: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <button onClick={handleDownload} disabled={loading} className={`px-4 py-2 text-sm rounded-lg font-medium transition ${loading ? "bg-slate-300 text-slate-500 cursor-wait" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>
+      {loading ? "생성중..." : label}
+    </button>
+  );
+}
+
 // ═══════════════ AI 분석 화면 ═══════════════
 function AnalysisView({totals,structSpecs,setStructSpecs,editMode,damageItems,setDamageItems,analysisResult,imagePreview,imageInputRef,handleImageUpload,onImageClick}){
   const toggleDamage=(id)=>setDamageItems(p=>p.map(d=>d.id===id?{...d,enabled:!d.enabled}:d));
@@ -281,6 +313,16 @@ function EstimateView({items,setItems,sagub,setSagub,gwangub,setGwangub,totals,e
           <SumCard label="관급자재비" value={totals.gwangubTotal} color="red"/>
           <SumCard label="관급수수료" value={totals.gwangubFee} color="pink"/>
           <SumCard label="총공사비" value={totals.grandTotal} color="slate" bold/>
+        </div>
+
+        {/* 엑셀 다운로드 버튼 */}
+        <div className="mt-6 p-4 bg-slate-50 border border-slate-200 rounded-lg">
+          <h4 className="text-sm font-bold text-slate-700 mb-3">엑셀 다운로드</h4>
+          <div className="flex flex-wrap gap-3">
+            <ExcelButton label="📊 설계내역서" endpoint="generate-excel" items={items} sagub={sagub} gwangub={gwangub} totals={totals} />
+            <ExcelButton label="📋 수량산출서" endpoint="generate-quantity" items={items} sagub={sagub} gwangub={gwangub} totals={totals} />
+            <ExcelButton label="📑 일위대가" endpoint="generate-unitprice" items={items} sagub={sagub} gwangub={gwangub} totals={totals} />
+          </div>
         </div>
       </section>
     </div>
