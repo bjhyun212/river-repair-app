@@ -349,35 +349,58 @@ export default function App() {
   const imageInputRef = useRef(null);
   const totals = calcTotals(items, sagub, gwangub);
 
-  // 사진 업로드 → API 분석 호출
+  // 이미지 리사이즈 (Netlify 1MB 제한 대응)
+  const resizeImage = (file, maxSize = 1024) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          let w = img.width, h = img.height;
+          if (w > maxSize || h > maxSize) {
+            if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+            else { w = Math.round(w * maxSize / h); h = maxSize; }
+          }
+          canvas.width = w; canvas.height = h;
+          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+          const resized = canvas.toDataURL("image/jpeg", 0.8);
+          resolve(resized);
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // 사진 업로드 → 리사이즈 → API 분석 호출
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      const fullBase64 = ev.target.result;
+    setLoading(true);
+    setError(null);
+    try {
+      const fullBase64 = await resizeImage(file, 1024);
       setImagePreview(fullBase64);
-      setLoading(true);
-      setError(null);
-      try {
-        // data:image/jpeg;base64, 접두사 제거 → 순수 base64만 서버로 전송
-        const pureBase64 = fullBase64.replace(/^data:image\/\w+;base64,/, "");
-        const res = await fetch("/.netlify/functions/analyze-photo", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: pureBase64 }),
-        });
-        if (!res.ok) throw new Error(`서버 오류: ${res.status}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        applyAnalysisData(data);
-      } catch (err) {
-        console.error("API 분석 실패:", err);
-        setError(`AI 분석 실패: ${err.message}`);
-      } finally {
-        setLoading(false);
+      const pureBase64 = fullBase64.replace(/^data:image\/\w+;base64,/, "");
+      const res = await fetch("/.netlify/functions/analyze-photo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: pureBase64 }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || errData.detail || `서버 오류: ${res.status}`);
       }
-    };
-    reader.readAsDataURL(file); e.target.value = "";
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      applyAnalysisData(data);
+    } catch (err) {
+      console.error("API 분석 실패:", err);
+      setError(`AI 분석 실패: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+    e.target.value = "";
   };
 
   // AI 분석 결과를 state에 반영 (서버 반환 형식에 맞춤)
