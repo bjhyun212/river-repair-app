@@ -176,7 +176,7 @@ ws["!ref"]=X.utils.encode_range({s:{r:0,c:0},e:{r,c:8}});X.utils.book_append_she
 async function askDesignAI(question, currentDamage) {
   const dmgList = (currentDamage||[]).filter(d=>d.enabled).map((d,i)=>({no:i+1,item:d.item,qty:d.qty,unit:d.unit}));
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const response = await fetch("/.netlify/functions/ai-proxy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -195,7 +195,7 @@ async function askDesignAI(question, currentDamage) {
 function getLocalAnswer(q) {
   if (q.match(/(수정|변경|바꿔|교체|해줘)/) && q.match(/(옹벽|블록|호안|석축|콘크리트|포장|복구)/))
     return `⚠️ 자연어 수정은 AI 서버 연결이 필요합니다.\n\n로컬에서는 명령어를 사용하세요:\n• 수정: 1 공종 역T형옹벽 신설\n• 수정: 2 산출근거 높이3.0m×연장20m=60㎡\n• 추가: 역T형옹벽 60 ㎡\n\n또는 피해현황 테이블에서 직접 셀을 클릭하여 편집하세요.`;
-  const DB={"석축":["석축: 자연석/가공석으로 토압·수압 지지하는 중력식 구조물","찰쌓기: 시멘트모르타르 접착 (KDS 51 40 15)","적용: H≤3m 소규모, 경사 1:0.3~1:0.5","기초: 근입≥세굴깊이+0.5m (최소 1.0m)"],"옹벽":["옹벽: 철근콘크리트 토류 구조물","종류: 중력식(H≤3m), 역T형(H=3~8m), 부벽식(H≥8m)","역T형: 전면벽+저판+뒷굽, 전도·활동·지지력 검토","기준: KDS 14 20 72, KDS 11 80 05","석축과 차이: ①H>3m가능 ②구조계산필수 ③내구성우수"],"차이":["석축 vs 옹벽 비교:","①재료: 석축=자연석, 옹벽=RC","②높이: 석축3m이하, 옹벽3~8m","③비용: 소규모→석축, 대규모→옹벽","④시공: 석축=석공, 옹벽=거푸집+타설","⑤기준: 석축=KDS5140, 옹벽=KDS1420","⑥내구성: 옹벽이 장기적 우수","⑦선택: 높이·토압·지반·경제성 종합검토"],"기초":["기초 σck=21MPa (25-210-12)","철근 SD400, HD13@200","근입: 세굴깊이+여유≥1.0m","잡석: T=0.3~0.5m, 부직포하부"],"호안":["호안: 하천 세굴·침식 방지","종류: 석축/블록/돌망태/식생/옹벽호안","수충부: 개선복구→구조물신설+기초보강"],"복구":["자연재해대책법 시행령 제47조","원인복구: 동일규격 복구","개선복구: 구조보강·신설 (수충부/세굴/반복)"],"단가":["2025 충북 일위대가","관급: 3000만원이상→발주처지급","사급: 미만→시공사구매","수수료: 관급×1.5%"]};
+  const DB={"석축":["석축: 자연석/가공석으로 토압·수압 지지하는 중력식 구조물","찰쌓기: 시멘트모르타르 접착 (KDS 51 40 15)","적용: H≤3m 소규모, 경사 1:0.3~1:0.5","기초: 근입≥세굴깊이+0.5m (최소 1.0m)"],"옹벽":["옹벽: 철근콘크리트 토류 구조물","종류: 중력식(H≤3m), 역T형(H=3~8m), 부벽식(H≥8m)","역T형: 전면벽+저판+뒷굽, 전도·활동·지지력 검토","기준: KDS 14 20 72, KDS 11 80 05","석축과 차이: ①H>3m가능 ②구조계산필수 ③내구성우수"],"차이":["석축 vs 옹벽 비교:","①재료: 석축=자연석, 옹벽=RC","②높이: 석축3m이하, 옹벽3~8m","③비용: 소규모→석축, 대규모→옹벽","④시공: 석축=석공, 옹벽=거푸집+타설","⑤기준: 석축=KDS5140, 옹벽=KDS1420","⑥내구성: 옹벽이 장기적 우수","⑦선택: 높이·토압·지반·경제성 종합검토"],"기초":["기초 σck=21MPa (25-210-12)","철근 SD400, HD13@200","근입: 세굴깊이+여유≥1.0m","잡석: T=0.3~0.5m, 부직포하부"],"호안":["호안: 하천 세굴·침식 방지","종류: 석축/블록/돌망태/식생/옹벽호안","수충부: 개선복구→구조물신설+기초보강"],"복구":["자연재해대책법 시행령 제47조","원인복구: 동일규격 복구","개선복구: 구조보강·신설 (수충부/세굴/반복)"],"단가":["2025 충북 일위대가","관급: 3000만원이상→발주처지급","사급: 미만→시공사구매","수수료: 관급×1.5%"],"관급":["■ 관급자재 vs 사급자재 비교:","","【관급자재】발주처(지자체)가 직접 구매하여 시공사에 지급하는 자재","• 판정기준: 단일품목 자재비 3,000만원 이상 또는 발주처 지정품목","• 대표품목: 레미콘, 철근, 석재, 골재, 관류 등 대형 주자재","• 관급수수료: 관급자재비 × 1.5% (보관·하역·소운반 비용)","• 설계내역서: 직접공사비(순공사비)에 미포함, 별도 집계","","【사급자재】시공사가 직접 구매하는 자재","• 판정기준: 단일품목 자재비 3,000만원 미만의 주자재","• 대표품목: 거푸집합판, 부직포, 비닐, 유로폼 등","• 설계내역서: 직접공사비에 미포함, 별도 집계","","【합계 구조】","• 순공사비 = 노무비 + 재료비(순수) + 경비","• 총공사비 = 순공사비 + 사급자재대 + 관급자재대 + 관급수수료","• 기준금액(3,000만원)과 수수료율(1.5%)은 발주처별 상이"],"사급":["사급자재: 시공사가 직접 구매하는 주자재","판정: 단일품목 자재비 3,000만원 미만","대표품목: 거푸집합판, 부직포, 비닐, 유로폼","순공사비에 미포함, 별도 집계 후 총공사비에 합산"],"배수":["배수체계 설계:","유공관(φ100~200mm): 옹벽/석축 배면 배수","맹암거: 지하수 차단·유도","측구(L형/U형): 도로 노면수 배수","집수정: 측구 연결, 우수 집중 배수","부직포: 배수층과 뒤채움 분리(토사유입 방지)"],"포장":["도로포장 복구:","아스팔트: 절삭후덧씌우기(#.326), 기층+표층","콘크리트: T=20cm 포장(#.335,#.336)","보조기층: 쇄석 T=15~20cm 다짐(#.306~308)","프라임코팅+택코팅 필수"]};
   for(const[key,refs] of Object.entries(DB)) if(q.includes(key)) return `📚 **${key}** 관련:\n\n${refs.join("\n")}`;
   return `AI 서버 연결 불가.\n\n키워드: 석축, 옹벽, 차이, 기초, 호안, 복구, 단가\n배포 환경에서는 전문 답변 제공.`;
 }
@@ -228,7 +228,7 @@ export default function App(){
     try{
       const base64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=()=>rej(new Error("읽기실패"));r.readAsDataURL(photoFile)});
       const mt=photoFile.type||"image/jpeg";
-      const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,system:`당신은 30년 경력의 토목직 공무원이자 하천 수해복구 설계 전문가입니다.\n사진을 분석하여 반드시 아래 JSON 형식으로만 응답하세요. JSON 외의 텍스트는 절대 포함하지 마세요.\n\n{"recovery":{"method":"복구방침(피해상황+복구방향 구체적 서술)","steps":["1.토공:...","2.구조물공:...","3.포장공:...","4.부대공:...","5.기타:..."]},"damage":[{"item":"피해공종명","basis":"수량산출근거(폭×높이×길이=수량)","qty":숫자,"unit":"㎡/㎥/m"}],"designItems":[{"cat":"1./2./3./4.","name":"공종명","spec":"규격","unit":"m²등","qty":숫자,"priceId":"#.번호"}]}\n\n분석원칙 (소규모주민숙원사업 = 개량설계):\n- 이 사업은 단순 하자보수가 아닌 【개량공법에 의한 전면적 개선설계】입니다\n- 사진의 표면적 증상(균열,파손)뿐 아니라 근본 원인(구조적 결함,설계미비,배수불량,기초부실 등)을 분석하세요\n- 기존 구조물의 문제점을 완전히 해결하는 개선방향을 제시하세요\n- 예: 단순 균열보수(X) → 구조물 전면 철거 후 개량 공법으로 재시공(O)\n- 예: 석축 부분보수(X) → RC옹벽 또는 보강토옹벽으로 공법 변경(O)\n- 예: 포장 패칭(X) → 기층부터 전면 재포장(O)\n- 구조적 취약점→무조건 개선복구, 기초근입D≥1.0m\n- 배수체계 개선(유공관,맹암거,측구 등) 반드시 포함 검토\n- 안전시설(가드레일,낙석방지망 등) 추가 설치 검토\n- 피해물량은 사진에서 추정가능한 치수로 산출하되, 개량설계 관점에서 충분한 물량 확보\n- priceId: #.22표토제거,#.28흙깍기,#.57구조물터파기,#.68뒤채움,#.70되메우기,#.77기초지정잡석,#.87사면녹화,#.127사토운반,#.155석축쌓기,#.193레미콘타설,#.204합판거푸집,#.216철근가공,#.276콘크리트양생,#.280부직포,#.281비닐,#.282물푸기,#.326아스팔트덧씌우기,#.481교통통제\n- 사진에 해당하지 않는 공종은 포함하지 마세요`,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mt,data:base64}},{type:"text",text:"이 현장 사진을 분석하여 피해현황과 복구 설계물량을 JSON으로 응답해주세요."}]}]})});
+      const resp=await fetch("/.netlify/functions/ai-proxy",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,system:`당신은 30년 경력의 토목직 공무원이자 하천 수해복구 설계 전문가입니다.\n사진을 분석하여 반드시 아래 JSON 형식으로만 응답하세요. JSON 외의 텍스트는 절대 포함하지 마세요.\n\n{"recovery":{"method":"복구방침(피해상황+복구방향 구체적 서술)","steps":["1.토공:...","2.구조물공:...","3.포장공:...","4.부대공:...","5.기타:..."]},"damage":[{"item":"피해공종명","basis":"수량산출근거(폭×높이×길이=수량)","qty":숫자,"unit":"㎡/㎥/m"}],"designItems":[{"cat":"1./2./3./4.","name":"공종명","spec":"규격","unit":"m²등","qty":숫자,"priceId":"#.번호"}]}\n\n분석원칙 (소규모주민숙원사업 = 개량설계):\n- 이 사업은 단순 하자보수가 아닌 【개량공법에 의한 전면적 개선설계】입니다\n- 사진의 표면적 증상(균열,파손)뿐 아니라 근본 원인(구조적 결함,설계미비,배수불량,기초부실 등)을 분석하세요\n- 기존 구조물의 문제점을 완전히 해결하는 개선방향을 제시하세요\n- 예: 단순 균열보수(X) → 구조물 전면 철거 후 개량 공법으로 재시공(O)\n- 예: 석축 부분보수(X) → RC옹벽 또는 보강토옹벽으로 공법 변경(O)\n- 예: 포장 패칭(X) → 기층부터 전면 재포장(O)\n- 구조적 취약점→무조건 개선복구, 기초근입D≥1.0m\n- 배수체계 개선(유공관,맹암거,측구 등) 반드시 포함 검토\n- 안전시설(가드레일,낙석방지망 등) 추가 설치 검토\n- 피해물량은 사진에서 추정가능한 치수로 산출하되, 개량설계 관점에서 충분한 물량 확보\n- priceId: #.22표토제거,#.28흙깍기,#.57구조물터파기,#.68뒤채움,#.70되메우기,#.77기초지정잡석,#.87사면녹화,#.127사토운반,#.155석축쌓기,#.193레미콘타설,#.204합판거푸집,#.216철근가공,#.276콘크리트양생,#.280부직포,#.281비닐,#.282물푸기,#.326아스팔트덧씌우기,#.481교통통제\n- 사진에 해당하지 않는 공종은 포함하지 마세요`,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mt,data:base64}},{type:"text",text:"이 현장 사진을 분석하여 피해현황과 복구 설계물량을 JSON으로 응답해주세요."}]}]})});
       if(!resp.ok)throw new Error(`API ${resp.status}`);
       const data=await resp.json();
       const text=data.content?.map(c=>c.type==="text"?c.text:"").join("")||"";
@@ -374,18 +374,105 @@ ${currentDamage || "(없음)"}
     chatEndRef.current?.scrollIntoView({behavior:"smooth"});
   },[chatInput,damage,recoveryPlan]);
 
-  /* ★ 설계내역서 작성 — 피해현황 반영하여 내역서 탭으로 이동 */
+  /* ★ 설계내역서 작성 — 피해현황 기반 설계물량 동적 생성 */
   const handleBuildEstimate=useCallback(()=>{
     const enabledDmg=damage.filter(d=>d.enabled);
     if(enabledDmg.length===0){alert("피해현황에 항목이 없습니다");return}
-    // 기존 items 유지 + 피해현황 변경 반영
-    if(items.length===0){
-      // items가 비어있으면 기본 세트로 초기화
-      _nid=200; setItems(INIT_ITEMS());
+
+    // 피해현황 키워드 → 설계내역서 세부공종 자동 매핑
+    const newItems=[];
+    let id=1;
+    const add=(cat,name,spec,unit,qty,priceId)=>newItems.push({id:id++,cat,name,spec,unit,qty:Math.round(qty*10)/10,priceId,labor:0,material:0,expense:0,enabled:true});
+
+    // 피해현황에서 수량 추출
+    const find=(keyword)=>enabledDmg.find(d=>d.item.includes(keyword));
+    const qtyOf=(keyword,fallback=0)=>{const d=find(keyword);return d?d.qty:fallback};
+
+    // 토공 (공통)
+    const hasStruct=enabledDmg.some(d=>d.item.match(/석축|옹벽|호안|콘크리트|기초|구조물/));
+    const hasPave=enabledDmg.some(d=>d.item.match(/포장|도로|아스팔트/));
+    const hasSlope=enabledDmg.some(d=>d.item.match(/사면|녹화|법면/));
+    const hasDirt=enabledDmg.some(d=>d.item.match(/굴착|사토|토사|잔해/));
+    const totalStructQty=enabledDmg.filter(d=>d.item.match(/석축|옹벽|호안|콘크리트|기초/)).reduce((s,d)=>s+d.qty,0);
+
+    // 1. 토공
+    if(hasStruct||hasDirt){
+      const tQty=qtyOf("토사")||qtyOf("굴착")||qtyOf("사토")||Math.round(totalStructQty*2);
+      if(tQty>0){
+        add("1.","표토제거","T=20CM, 굴삭기0.7㎥","m²",Math.round(tQty*0.3)||10,"#.22");
+        add("1.","흙깍기","보통토사,소규모,굴착기1.0㎥","m³",Math.round(tQty*0.3)||10,"#.28");
+        add("1.","구조물터파기","육상토사,기계100%","m³",qtyOf("기초")||qtyOf("콘크리트")||Math.round(totalStructQty*0.5)||20,"#.57");
+      }
     }
-    alert(`피해현황 ${enabledDmg.length}개 항목 반영 완료!\n설계내역서 탭에서 세부 공종을 확인/편집하세요.`);
+
+    // 2. 구조물공
+    enabledDmg.forEach(d=>{
+      if(d.item.match(/석축/)){
+        add("2.","석축쌓기",d.item.includes("메")?"메쌓기,T=35cm이하":"찰쌓기,T=35cm이하","m²",d.qty,"#.155");
+      }
+      if(d.item.match(/옹벽|RC.*벽|역.*T/i)){
+        add("2.","레미콘타설(펌프차)","철근(S:8-12cm),TYPE-Ⅱ","m³",d.qty,"#.193");
+        add("2.","합판거푸집","(4회) 보통","m²",Math.round(d.qty*0.8),"#.204");
+        add("2.","철근가공 및 조립","TYPE-1-1","ton",Math.round(d.qty*0.05*10)/10||0.5,"#.216");
+      }
+      if(d.item.match(/기초.*콘크리트|콘크리트.*기초|RC.*기초/)){
+        add("2.","레미콘타설(펌프차)","철근(S:8-12cm),TYPE-Ⅱ","m³",d.qty,"#.193");
+        add("2.","합판거푸집","(4회) 보통","m²",Math.round(d.qty*0.8),"#.204");
+        add("2.","철근가공 및 조립","TYPE-1-1","ton",Math.round(d.qty*0.05*10)/10||0.5,"#.216");
+      }
+      if(d.item.match(/잡석/)){
+        add("2.","기초지정","잡석","m³",d.qty,"#.77");
+      }
+    });
+
+    // 콘크리트양생 (구조물이 있으면)
+    if(hasStruct){
+      const structArea=enabledDmg.filter(d=>d.item.match(/석축|옹벽|기초|콘크리트/)).reduce((s,d)=>s+(d.unit.includes("²")?d.qty:d.qty*2),0);
+      if(structArea>0) add("2.","콘크리트양생","습윤양생","m²",Math.round(structArea),"#.276");
+    }
+
+    // 3. 포장공
+    enabledDmg.filter(d=>d.item.match(/포장|도로|아스팔트/)).forEach(d=>{
+      add("3.","절삭후아스팔트덧씌우기","B-Type(1회절삭,1회포장)","m²",d.qty,"#.326");
+    });
+
+    // 4. 부대공
+    if(hasStruct){
+      const basisArea=enabledDmg.filter(d=>d.item.match(/석축|옹벽|기초|잡석/)).reduce((s,d)=>s+d.qty,0);
+      add("4.","부직포설치","","m²",Math.round(basisArea*1.2)||30,"#.280");
+      add("4.","비닐깔기","","m²",Math.round(basisArea*0.5)||20,"#.281");
+    }
+    if(hasDirt){
+      const sato=qtyOf("토사")||qtyOf("사토")||qtyOf("굴착")||Math.round(totalStructQty*1.5);
+      if(sato>0) add("1.","사토운반","토사,L=5.0KM","m³",sato,"#.127");
+    }
+    if(hasStruct||hasPave){
+      add("4.","물푸기","","hr",24,"#.282");
+      add("4.","교통통제및안전처리","500M미만","일",5,"#.481");
+    }
+
+    // 뒤채움/되메우기
+    if(hasStruct){
+      add("1.","뒤채움 및 다짐","소형장비","m³",Math.round(totalStructQty*0.4)||15,"#.68");
+      add("1.","되메우기 및 다짐","소형장비","m³",Math.round(totalStructQty*0.2)||10,"#.70");
+    }
+
+    // 사면
+    enabledDmg.filter(d=>d.item.match(/사면|녹화|법면/)).forEach(d=>{
+      add("1.","절토사면 녹화","T=10㎝","m²",d.qty,"#.87");
+    });
+
+    // 낙석방지
+    enabledDmg.filter(d=>d.item.match(/낙석/)).forEach(d=>{
+      add("4.","낙석방지망","철망설치(기계식)","m²",d.qty,"#.453");
+    });
+
+    // items가 비어있거나, 피해현황 기반으로 새로 생성
+    _nid=id+200;
+    setItems(newItems);
+    alert(`피해현황 ${enabledDmg.length}개 항목 → 설계내역서 ${newItems.length}개 공종 생성 완료!`);
     setView("estimate"); window.scrollTo(0,0);
-  },[damage,items]);
+  },[damage]);
   const handleSave=useCallback(async()=>{const json=JSON.stringify({v:"8.3",damage,items,chatLog,projName,projLoc,at:new Date().toISOString()},null,2);const blob=new Blob([json],{type:"application/json"});if(window.showSaveFilePicker){try{const handle=await window.showSaveFilePicker({suggestedName:`소규모주민숙원_${new Date().toISOString().slice(0,10)}.json`,types:[{description:"JSON 파일",accept:{"application/json":[".json"]}}]});const writable=await handle.createWritable();await writable.write(blob);await writable.close();alert("저장 완료!")}catch(e){if(e.name!=="AbortError")alert("저장 오류: "+e.message)}}else{const fn=window.prompt("파일명:",`소규모주민숙원_${new Date().toISOString().slice(0,10)}`);if(!fn)return;const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${fn}.json`;a.click();URL.revokeObjectURL(a.href)}},[damage,items,chatLog,projName,projLoc]);
   const loadJ=useCallback(e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);const li=d.items||d.designItems||[];const ld=d.damage||d.dmg||[];if(li.length>0){setItems(li.map(i=>({labor:0,material:0,expense:0,...i})));setDamage(ld.length?ld:INIT_DAMAGE());setAnalyzed(true);if(d.chatLog)setChatLog(d.chatLog);if(d.projName)setProjName(d.projName);if(d.projLoc)setProjLoc(d.projLoc);_nid=Math.max(...li.map(x=>x.id),200)+1;alert(`불러오기 완료! (${li.length}개)`)}else alert("데이터 없음")}catch(err){alert("오류:"+err.message)}};r.readAsText(f);e.target.value=""},[]);
   const handleXL=useCallback(async t=>{setXlLoad(t);try{if(t==="d")await genDesignXL(items,sagub,gwangub,FEE_RATE);else if(t==="q")await genQtyXL(items,gwangub,FEE_RATE);else await genUnitXL(items,sagub,gwangub)}finally{setXlLoad(null)}},[items,sagub,gwangub]);
@@ -450,7 +537,7 @@ ${currentDamage || "(없음)"}
 
           <section><Hd n="💬" t="수정.질문"/>
           <p className="text-xs text-slate-500 mt-1 mb-2">명령: "추가: 낙석방지망 32m" · 질문: 설계·공법·기준 등 무엇이든 (AI가 전문적으로 답변)</p>
-          <div className="border rounded-lg bg-slate-50 p-3 max-h-52 overflow-y-auto space-y-2">{chatLog.length===0&&<p className="text-slate-400 text-sm text-center py-3">명령: "추가: 낙석방지망 32m", "삭제: 3", "수정: 1 수량 60"<br/>질문: "석축과 옹벽의 차이점", "기초 근입깊이 기준" 등 자유롭게</p>}{chatLog.map((msg,i)=><div key={i} className={`flex ${msg.role==="user"?"justify-end":"justify-start"}`}><div className={`max-w-md px-3 py-2 rounded-lg text-sm whitespace-pre-line ${msg.role==="user"?"bg-blue-600 text-white":"bg-white border text-slate-700"}`}>{msg.text}</div></div>)}<div ref={chatEndRef}/></div><div className="flex gap-2 mt-2"><input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChatSend()}}} placeholder="명령 또는 질문 입력..." className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"/><button onClick={handleChatSend} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm">전송</button></div></section>
+          <div className="border rounded-lg bg-slate-50 p-3 max-h-52 overflow-y-auto space-y-2">{chatLog.length===0&&<p className="text-slate-400 text-sm text-center py-3">명령: "추가: 낙석방지망 32m", "삭제: 3", "수정: 1 수량 60"<br/>질문: "석축과 옹벽의 차이점", "기초 근입깊이 기준" 등 자유롭게</p>}{chatLog.map((msg,i)=><div key={i} className={`flex ${msg.role==="user"?"justify-end":"justify-start"}`}><div className={`max-w-md px-3 py-2 rounded-lg text-sm whitespace-pre-line ${msg.role==="user"?"bg-blue-600 text-white":"bg-white border text-slate-700"}`}>{msg.text}</div></div>)}<div ref={chatEndRef}/></div><div className="flex gap-2 mt-2"><input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChatSend()}}} placeholder="명령 또는 질문 입력..." className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"/><button onClick={handleChatSend} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm">전송</button>{chatLog.length>0&&<button onClick={()=>setChatLog([])} className="px-3 py-2 bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-300 text-xs font-medium">🗑️ 초기화</button>}</div></section>
 
           <section><Hd n="3" t="구조물 제원"/><div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3"><SpecC t="석축(찰쌓기)" items={[`H=${STRUCT.wallH}m, T=${STRUCT.wallT*100}cm`,`L=${STRUCT.wallL}m, 근입D=${STRUCT.foundD}m`]} c="blue"/><SpecC t="기초 콘크리트" items={[`${STRUCT.conSpec} (σck=21MPa)`,`B=${STRUCT.foundW}m, D=${STRUCT.foundD}m`,STRUCT.steelSpec]} c="red"/><SpecC t="잡석 기초" items={[`B=${STRUCT.foundW}m, T=${STRUCT.japsukT}m`,"부직포 하부+배면"]} c="amber"/></div></section>
 
