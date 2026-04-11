@@ -249,6 +249,7 @@ export default function App(){
           <button onClick={handleSave} className="px-3 py-1.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 font-medium">💾 저장</button>
           <button onClick={()=>jsonRef.current?.click()} className="px-3 py-1.5 text-xs bg-yellow-50 text-yellow-700 border border-yellow-200 rounded hover:bg-yellow-100">📂 불러오기</button>
           <input ref={jsonRef} type="file" accept=".json" className="hidden" onChange={loadJ}/>
+          <button onClick={()=>{if(window.confirm("⚠️ 현재 작업을 반드시 저장한 후 실행하세요.\n\n저장하셨습니까?\n\n[확인] → Netlify 앱 실행\n[취소] → 돌아가서 저장"))window.open("https://bespoke-boba-03d8af.netlify.app","_blank")}} className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium">🚀 설계앱 실행</button>
         </div>
       </div></div>
 
