@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import { useState, useRef, Fragment } from "react";
 
 /* ============================================================
    소규모주민숙원사업 종합검토보고서 v7.1
@@ -316,7 +316,7 @@ function EstimateView({ items, setItems, sagub, setSagub, gwangub, setGwangub, t
                 <td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-700">{fmt(Object.values(totals.catsMat).reduce((a,b)=>a+b,0))}</td>
                 <td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-700">{fmt(Object.values(totals.catsExp).reduce((a,b)=>a+b,0))}</td>
               </tr>
-              {catOrder.map(cat=>{const ci=items.filter(i=>i.cat===cat);if(!ci.length)return null;return(<React.Fragment key={cat}>
+              {catOrder.map(cat=>{const ci=items.filter(i=>i.cat===cat);if(!ci.length)return null;return(<Fragment key={cat}>
                 <tr className="bg-blue-50 font-bold">{editMode&&<td className="border border-slate-300"/>}<td className="border border-slate-300 px-2 py-2 text-center text-blue-700">{cat}</td><td className="border border-slate-300 px-2 py-2 text-blue-700">{catNames[cat]}</td>{[...Array(3)].map((_,i)=><td key={i} className="border border-slate-300"/>)}<td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-700">{fmt(totals.cats[cat])}</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-600">{fmt(totals.catsLabor[cat])}</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-600">{fmt(totals.catsMat[cat])}</td><td className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-blue-600">{fmt(totals.catsExp[cat])}</td></tr>
                 {ci.map((item,idx)=>(<tr key={item.id} className={`${!item.enabled?"opacity-40 line-through":""} ${idx%2===0?"bg-white":"bg-slate-50"} hover:bg-blue-50 transition`}>
                   {editMode&&<td className="border border-slate-200 px-1 py-1.5 text-center"><input type="checkbox" checked={item.enabled} onChange={()=>toggleItem(item.id)} className="w-4 h-4"/></td>}
@@ -334,7 +334,7 @@ function EstimateView({ items, setItems, sagub, setSagub, gwangub, setGwangub, t
                   <td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(item.expense)}</td>
                   <td className="border border-slate-200 px-1 py-1.5 text-right">{fmt(Math.round(item.qty*item.expense))}</td>
                 </tr>))}
-              </React.Fragment>);})}
+              </Fragment>);})}
 
               {/* 사급 */}
               <tr className="bg-orange-50 font-bold">{editMode&&<td className="border border-slate-300"/>}<td className="border border-slate-300 px-2 py-2 text-center text-orange-700">5.</td><td className="border border-slate-300 px-2 py-2 text-orange-700">사급자재대</td><td colSpan={4} className="border border-slate-300"/><td className="border border-slate-300 px-2 py-2 text-right text-orange-700">{fmt(totals.sagubTotal)}</td><td colSpan={6} className="border border-slate-300"/></tr>
