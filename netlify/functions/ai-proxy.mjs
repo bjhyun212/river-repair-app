@@ -17,7 +17,8 @@ export default async (req) => {
 
   try {
     const body = await req.json();
-    const apiKey = Netlify.env.get("ANTHROPIC_API_KEY");
+    // Netlify Functions: process.env, Edge Functions: Netlify.env.get
+    const apiKey = process.env.ANTHROPIC_API_KEY || null;
 
     if (!apiKey) {
       return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }), {
