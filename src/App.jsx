@@ -1,7 +1,7 @@
 import { useState, useRef, Fragment } from "react";
 
 /* ============================================================
-   소규모주민숙원사업 종합검토보고서 v7.2
+   소규모주민숙원사업 v7.2
    흐름: 사진업로드 → API분석 → 결과표시 → 편집 → 저장
    - 처음 실행: 사진 업로드 화면만
    - 사진 업로드: Netlify Function 호출 → AI 분석
@@ -152,7 +152,7 @@ function AnalysisView({totals,structSpecs,setStructSpecs,editMode,damageItems,se
         <SectionTitle num="1" title="종합 분석" />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
           <InfoCard title="현장 제원" color="blue">
-            <InfoRow label="피해 위치" value={ar.bankSide||"좌안"} />
+            <InfoRow label="피해 위치" value={ar.bankSide||"-"} />
             <InfoRow label="피해 연장" value={ar.damageLength||"-"} />
             <InfoRow label="구조물 높이" value={ar.wallHeight||"-"} />
             <InfoRow label="기초 세굴 깊이" value={ar.scourDepth||"-"} />
@@ -312,24 +312,25 @@ export default function App() {
     const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = async (ev) => {
-      const base64 = ev.target.result;
-      setImagePreview(base64);
+      const fullBase64 = ev.target.result;
+      setImagePreview(fullBase64);
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("/.netlify/functions/analyze", {
+        // data:image/jpeg;base64, 접두사 제거 → 순수 base64만 서버로 전송
+        const pureBase64 = fullBase64.replace(/^data:image\/\w+;base64,/, "");
+        const res = await fetch("/.netlify/functions/analyze-photo", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: base64 }),
+          body: JSON.stringify({ image: pureBase64 }),
         });
         if (!res.ok) throw new Error(`서버 오류: ${res.status}`);
         const data = await res.json();
+        if (data.error) throw new Error(data.error);
         applyAnalysisData(data);
       } catch (err) {
         console.error("API 분석 실패:", err);
-        setError("AI 분석에 실패했습니다. 편집 모드에서 수동으로 입력해주세요.");
-        // 빈 상태로 편집 모드 전환
-        setEditMode(true);
+        setError(`AI 분석 실패: ${err.message}`);
       } finally {
         setLoading(false);
       }
@@ -337,34 +338,94 @@ export default function App() {
     reader.readAsDataURL(file); e.target.value = "";
   };
 
-  // AI 분석 결과를 state에 반영
+  // AI 분석 결과를 state에 반영 (서버 반환 형식에 맞춤)
+  // 서버 반환: { analysis, items: {토공:[...],구조물공:[...],...}, materials: {관급:[...],사급:[...]}, structure }
   const applyAnalysisData = (data) => {
-    setAnalysisResult(data.analysis || {});
+    // 1. 분석 결과 (종합분석 카드용)
+    const a = data.analysis || {};
+    setAnalysisResult({
+      bankSide: a.riverBank || "좌안",
+      judgement: a.judgement || "개선복구",
+      damageLength: a.damageLength ? `약 ${a.damageLength}m` : "-",
+      wallHeight: a.damageHeight ? `약 ${a.damageHeight}m` : "-",
+      cause1: a.cause || "-",
+      cause2: a.damageDescription || "-",
+      cause3: "-",
+      designBasis: "기초 근입 D=1.0m 이상",
+    });
 
-    // 설계 물량 → items (단가 DB 매칭)
-    if (data.designItems && data.designItems.length > 0) {
-      const mapped = data.designItems.map((di, idx) => {
-        const price = PRICE_DB[di.priceId] || {};
-        return {
-          id: idx + 1, cat: di.cat || "4.", catName: di.catName || "부대공",
-          name: price.name || di.name || "미지정", spec: price.spec || di.spec || "",
-          unit: price.unit || di.unit || "m²", qty: di.qty || 0,
-          labor: price.labor || 0, material: price.material || 0,
-          expense: price.expense || 0, total: price.total || 0,
-          note: di.priceId || "", enabled: true,
-        };
-      });
-      setItems(mapped);
+    // 2. 설계 물량 → items (서버에서 이미 단가 적용됨)
+    const catMap = { "토공":"1.", "구조물공":"2.", "포장공":"3.", "부대공":"4." };
+    const catNameMap = { "1.":"토공", "2.":"구조물공", "3.":"포장공", "4.":"부대공" };
+    let allItems = [];
+    let itemId = 1;
+    if (data.items) {
+      for (const [catName, catItems] of Object.entries(data.items)) {
+        const cat = catMap[catName] || "4.";
+        if (!Array.isArray(catItems)) continue;
+        for (const ci of catItems) {
+          const price = PRICE_DB[ci.priceId] || {};
+          const labor = price.labor || ci.labor || 0;
+          const material = price.material || ci.material || 0;
+          const expense = price.expense || ci.expense || 0;
+          allItems.push({
+            id: itemId++, cat, catName: catNameMap[cat] || catName,
+            name: price.name || ci.name || "미지정",
+            spec: price.spec || ci.spec || "",
+            unit: price.unit || ci.unit || "m²",
+            qty: ci.qty || 0,
+            labor, material, expense,
+            total: labor + material + expense,
+            note: ci.priceId || "",
+            enabled: true,
+          });
+        }
+      }
+    }
+    setItems(allItems);
+
+    // 3. 피해현황 (분석 결과에서 생성)
+    const dmg = [];
+    if (a.damageLength) dmg.push({ id:1, name:"석축/호안 붕괴", basis:`붕괴 연장 약 ${a.damageLength}m × 높이 약 ${a.damageHeight||2}m`, qty: Math.round((a.damageLength||0)*(a.damageHeight||2)), unit:"㎡", enabled:true });
+    if (allItems.some(i=>i.note==="#.325"||i.note==="#.327"||i.note==="#.331")) dmg.push({ id:2, name:"도로 포장 파손", basis:"파손 구간 복구", qty: allItems.find(i=>i.cat==="3.")?.qty||0, unit:"㎡", enabled:true });
+    if (allItems.some(i=>i.note==="#.57"||i.note==="#.58")) dmg.push({ id:3, name:"기초 세굴", basis:"세굴 구간 터파기", qty: allItems.find(i=>i.note==="#.57"||i.note==="#.58")?.qty||0, unit:"㎥", enabled:true });
+    if (allItems.some(i=>i.note==="#.127")) dmg.push({ id:4, name:"토사 유실/퇴적", basis:"토사 반출", qty: allItems.find(i=>i.note==="#.127")?.qty||0, unit:"㎥", enabled:true });
+    if (dmg.length === 0) dmg.push({ id:1, name:"피해 현황", basis:"사진 분석 기반", qty:0, unit:"㎡", enabled:true });
+    setDamageItems(dmg);
+
+    // 4. 관급/사급 자재
+    if (data.materials) {
+      if (data.materials["관급"]) {
+        setGwangub(data.materials["관급"].map((g,i) => ({
+          id: 201+i, sub: `6.${i+1}`, name: g.name, spec: g.spec||"",
+          unit: g.unit||"㎥", qty: g.qty||0, unitPrice: g.unitPrice||0, enabled: true,
+        })));
+      }
+      if (data.materials["사급"]) {
+        setSagub(data.materials["사급"].map((s,i) => ({
+          id: 101+i, name: s.name, spec: s.spec||"",
+          unit: s.unit||"㎡", qty: s.qty||0, unitPrice: s.unitPrice||0, enabled: true,
+        })));
+      }
     }
 
-    // 사급자재
-    if (data.sagubItems) setSagub(data.sagubItems.map((s, i) => ({ ...s, id: 100 + i + 1, enabled: true })));
-    // 관급자재
-    if (data.gwangubItems) setGwangub(data.gwangubItems.map((g, i) => ({ ...g, id: 200 + i + 1, enabled: true })));
-    // 피해현황
-    if (data.damageItems) setDamageItems(data.damageItems.map((d, i) => ({ ...d, id: i + 1, enabled: true })));
-    // 구조물 제원
-    if (data.structSpecs) setStructSpecs(data.structSpecs);
+    // 5. 구조물 제원
+    if (data.structure) {
+      const st = data.structure;
+      const parseNum = (v) => parseFloat(String(v).replace(/[^0-9.]/g,"")) || 0;
+      setStructSpecs({
+        wallHeight: parseNum(a.damageHeight) || 2.5,
+        wallLength: (parseNum(a.damageLength) || 20) + 0.5,
+        wallThickness: 0.35,
+        foundWidth: parseNum(a.damageLength) > 0 ? 2.5 : 0,
+        foundDepth: parseNum(st.embedDepth) || 1.0,
+        japseokThickness: 0.5,
+        backfillWidth: 1.0,
+        backfillDepth: 2.0,
+        roadWidth: 2.0,
+        roadThickness: 0.05,
+      });
+    }
   };
 
   // 전체 초기화 (새 작업)
@@ -414,7 +475,7 @@ export default function App() {
         <div className="flex items-center justify-center min-h-screen p-4">
           <div className="w-full max-w-lg">
             <div className="text-center mb-8">
-              <h1 className="text-2xl font-bold text-slate-800">종합검토보고서</h1>
+              <h1 className="text-2xl font-bold text-slate-800">소규모주민숙원사업</h1>
               <p className="text-sm text-slate-500 mt-2">하천 수해복구 설계 분석 시스템</p>
             </div>
             <div className="bg-white border border-slate-200 rounded-xl p-8 shadow-sm">
@@ -460,7 +521,7 @@ export default function App() {
       <div className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center justify-between h-14">
-            <h1 className="text-base font-bold text-slate-800 hidden sm:block">종합검토보고서</h1>
+            <h1 className="text-base font-bold text-slate-800 hidden sm:block">소규모주민숙원사업</h1>
             <div className="flex bg-slate-100 rounded-lg p-1">
               <button onClick={()=>setView("analysis")} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view==="analysis"?"bg-blue-600 text-white shadow-sm":"text-slate-600 hover:bg-slate-200"}`}>🔍 AI 분석</button>
               <button onClick={()=>setView("estimate")} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view==="estimate"?"bg-blue-600 text-white shadow-sm":"text-slate-600 hover:bg-slate-200"}`}>📋 설계내역서</button>
@@ -522,7 +583,7 @@ export default function App() {
 
       <div className="text-center text-xs text-slate-400 py-6 border-t border-slate-100">
         <p>상세 수량산출 근거는 엑셀 파일 참조</p>
-        <p className="mt-1">종합검토보고서 v7.2 — 2025년 단가목록 적용 (충청북도)</p>
+        <p className="mt-1">소규모주민숙원사업 v7.2 — 2025년 단가목록 적용 (충청북도)</p>
       </div>
       </>
       )}
