@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { UNIT_PRICES } from './unitPrices.js';
+import { matchPrice } from './unitPrices.js';
 
 const fmt = (n) => (n ?? 0).toLocaleString('ko-KR');
 const fmtQty = (n, unit) => {
@@ -74,23 +74,29 @@ export default function App() {
     }
   };
 
-  // 단가 매핑
+  // 2025년 단가 강제 매칭 — AI 응답 단가를 PDF 단가로 덮어쓰기
   const enrichWithPrices = (data) => {
     const categories = ['토공', '구조물공', '포장공', '부대공'];
     for (const cat of categories) {
       if (!data.items[cat]) continue;
       data.items[cat] = data.items[cat].map(item => {
-        const priceKey = item.priceKey || item.name;
-        const price = UNIT_PRICES[priceKey] || null;
+        const matched = matchPrice(item);
+        if (matched) {
+          return {
+            ...item,
+            priceId: matched.id,
+            spec: matched.spec,
+            unit: matched.unit,
+            labor: matched.labor,
+            material: matched.material,
+            expense: matched.expense,
+            priceSource: matched.source,
+          };
+        }
+        // 매칭 실패 — AI 원본 단가 유지 + 경고 표시
         return {
           ...item,
-          priceId: price ? price.id : (item.priceId || ''),
-          spec: price ? price.spec : (item.spec || ''),
-          unit: price ? price.unit : (item.unit || ''),
-          labor: price ? price.labor : (item.labor || 0),
-          material: price ? price.material : (item.material || 0),
-          expense: price ? price.expense : (item.expense || 0),
-          priceSource: price ? '2025 단가목록' : '유사공종/물가정보',
+          priceSource: '⚠ 물가정보 확인필요',
         };
       });
     }

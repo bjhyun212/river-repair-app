@@ -42,7 +42,7 @@ export default async (req) => {
   ws.getRow(1).height = 30;
 
   // 헤더
-  const headers = ['단가ID', '공종명', '규격', '합계', '노무비', '재료비', '경비', '자재구분', '단가출처'];
+  const headers = ['단가ID', '공종명', '규격', '합계', '노무비', '재료비', '경비', '단위', '단가출처'];
   const row2 = ws.getRow(2);
   headers.forEach((h, i) => {
     const cell = row2.getCell(i + 1);
@@ -76,7 +76,7 @@ export default async (req) => {
       ws.getCell(row, 5).value = item.labor || 0;
       ws.getCell(row, 6).value = item.material || 0;
       ws.getCell(row, 7).value = item.expense || 0;
-      ws.getCell(row, 8).value = matType;
+      ws.getCell(row, 8).value = item.unit || '';
       ws.getCell(row, 9).value = item.priceSource || '2025 단가목록';
 
       for (let c = 1; c <= 9; c++) {
@@ -90,43 +90,11 @@ export default async (req) => {
     }
   }
 
-  // 관급자재 단가
-  row++;
-  ws.mergeCells(`A${row}:I${row}`);
-  ws.getCell(`A${row}`).value = '[ 관급자재 단가 ]';
-  s(ws.getCell(`A${row}`), { fill: gwFill, font: hFont });
-  row++;
-
-  for (const m of (materials?.관급 || [])) {
-    ws.getCell(row, 2).value = m.name;
-    ws.getCell(row, 3).value = m.spec;
-    ws.getCell(row, 4).value = m.unitPrice;
-    ws.getCell(row, 8).value = '관급';
-    ws.getCell(row, 9).value = `단위: ${m.unit}`;
-    for (let c = 1; c <= 9; c++) s(ws.getCell(row, c), { font: { name: 'Malgun Gothic', size: 9 }, fmt: c === 4 ? numFmt : undefined });
-    row++;
-  }
-
-  // 사급자재 단가
-  row++;
-  ws.mergeCells(`A${row}:I${row}`);
-  ws.getCell(`A${row}`).value = '[ 사급자재 단가 ]';
-  s(ws.getCell(`A${row}`), { fill: sagubFill, font: hFont });
-  row++;
-
-  for (const m of (materials?.사급 || [])) {
-    ws.getCell(row, 2).value = m.name;
-    ws.getCell(row, 3).value = m.spec;
-    ws.getCell(row, 4).value = m.unitPrice;
-    ws.getCell(row, 8).value = '사급';
-    ws.getCell(row, 9).value = `단위: ${m.unit}`;
-    for (let c = 1; c <= 9; c++) s(ws.getCell(row, c), { font: { name: 'Malgun Gothic', size: 9 }, fmt: c === 4 ? numFmt : undefined });
-    row++;
-  }
-
   // 주석
   row += 2;
   const notes = [
+    '※ 본 일위대가표는 시공단가(노무비+재료비+경비)만 포함합니다.',
+    '※ 관급자재(레미콘,철근,석재 등) 및 사급자재(거푸집자재,부직포 등)는 별도 산출합니다.',
     '※ 단가적용 원칙: ① 2025년 충청북도 단가목록 우선적용',
     '                   ② 해당 공종이 없을 경우 유사공종 단가 적용',
     '                   ③ 유사공종도 없을 경우 가격정보 또는 물가정보 단가 적용',
