@@ -190,9 +190,11 @@ export default function App(){
   const[chatLog,setChatLog]=useState([]);
   const[chatInput,setChatInput]=useState("");
   const[xlLoad,setXlLoad]=useState(null);
+  const[projName,setProjName]=useState(""); // 공사명
+  const[projLoc,setProjLoc]=useState("");   // 위치
   const fileRef=useRef(null),jsonRef=useRef(null),chatEndRef=useRef(null);
 
-  const handleNewWork=useCallback(()=>{if(!window.confirm("초기화?"))return;_nid=200;setDamage([]);setItems([]);setPhotoUrl(null);setAnalyzed(false);setChatLog([]);setView("analysis")},[]);
+  const handleNewWork=useCallback(()=>{if(!window.confirm("초기화?"))return;_nid=200;setDamage([]);setItems([]);setPhotoUrl(null);setAnalyzed(false);setChatLog([]);setProjName("");setProjLoc("");setView("analysis")},[]);
   const handleAnalyze=useCallback(()=>{if(!photoUrl){alert("사진을 업로드해주세요");return}setAnalyzing(true);setTimeout(()=>{setAnalyzing(false);setAnalyzed(true);setDamage(INIT_DAMAGE());_nid=200;setItems(INIT_ITEMS())},1500)},[photoUrl]);
 
   const allD=useMemo(()=>damage.length>0&&damage.every(d=>d.enabled),[damage]);
@@ -234,9 +236,55 @@ export default function App(){
   const gTot=gwangub.reduce((s,i)=>s+Math.round(i.qty*i.unitPrice),0);
   const gF=Math.round(gTot*FEE_RATE),grand=sunG+sT+gTot+gF;
 
-  const handleChatSend=useCallback(()=>{if(!chatInput.trim())return;const msg=chatInput.trim();setChatLog(p=>[...p,{role:"user",text:msg}]);setChatInput("");setTimeout(()=>{setChatLog(p=>[...p,{role:"ai",text:getDesignAnswer(msg)}]);chatEndRef.current?.scrollIntoView({behavior:"smooth"})},500)},[chatInput]);
-  const handleSave=useCallback(async()=>{const json=JSON.stringify({v:"8.3",damage,items,chatLog,at:new Date().toISOString()},null,2);const blob=new Blob([json],{type:"application/json"});if(window.showSaveFilePicker){try{const handle=await window.showSaveFilePicker({suggestedName:`소규모주민숙원_${new Date().toISOString().slice(0,10)}.json`,types:[{description:"JSON 파일",accept:{"application/json":[".json"]}}]});const writable=await handle.createWritable();await writable.write(blob);await writable.close();alert("저장 완료!")}catch(e){if(e.name!=="AbortError")alert("저장 오류: "+e.message)}}else{const fn=window.prompt("파일명:",`소규모주민숙원_${new Date().toISOString().slice(0,10)}`);if(!fn)return;const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${fn}.json`;a.click();URL.revokeObjectURL(a.href)}},[damage,items,chatLog]);
-  const loadJ=useCallback(e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);const li=d.items||d.designItems||[];const ld=d.damage||d.dmg||[];if(li.length>0){setItems(li.map(i=>({labor:0,material:0,expense:0,...i})));setDamage(ld.length?ld:INIT_DAMAGE());setAnalyzed(true);if(d.chatLog)setChatLog(d.chatLog);_nid=Math.max(...li.map(x=>x.id),200)+1;alert(`불러오기 완료! (${li.length}개)`)}else alert("데이터 없음")}catch(err){alert("오류:"+err.message)}};r.readAsText(f);e.target.value=""},[]);
+  /* ★ 수정.질문 — 명령어 파싱 + 설계 Q&A */
+  const handleChatSend=useCallback(()=>{
+    if(!chatInput.trim()) return;
+    const msg=chatInput.trim();
+    setChatLog(p=>[...p,{role:"user",text:msg}]);
+    setChatInput("");
+    setTimeout(()=>{
+      let reply="";
+      // 추가 명령: "추가: 낙석방지망 32m" 또는 "추가: 공종명 수량 단위"
+      const addMatch=msg.match(/^추가[:：]\s*(.+?)\s+(\d+\.?\d*)\s*(m²|m³|m|hr|ton|일|식|㎡|㎥|본|개소|km)?$/);
+      if(addMatch){
+        const newItem={id:Date.now(),item:addMatch[1],basis:"수정.질문에서 추가",qty:Number(addMatch[2]),unit:addMatch[3]||"식",enabled:true};
+        setDamage(p=>[...p,newItem]);
+        reply=`✅ 피해현황에 추가 완료!\n\n공종: ${addMatch[1]}\n수량: ${addMatch[2]} ${addMatch[3]||"식"}\n\n피해현황 테이블을 확인하세요.`;
+      }
+      // 삭제 명령: "삭제: 3" (No번호)
+      else if(/^삭제[:：]\s*(\d+)$/.test(msg)){
+        const no=Number(msg.match(/(\d+)/)[1]);
+        setDamage(p=>{const enabled=p.filter(d=>d.enabled);if(no>=1&&no<=enabled.length){const target=enabled[no-1];return p.filter(d=>d.id!==target.id)}return p});
+        reply=`✅ ${no}번 항목 삭제 완료!`;
+      }
+      // 수정 명령: "수정: 1 수량 60" 또는 "수정: 2 공종 호안블럭설치"
+      else if(/^수정[:：]\s*(\d+)\s+(수량|공종|산출근거|단위)\s+(.+)$/.test(msg)){
+        const m=msg.match(/^수정[:：]\s*(\d+)\s+(수량|공종|산출근거|단위)\s+(.+)$/);
+        const no=Number(m[1]),fieldMap={"수량":"qty","공종":"item","산출근거":"basis","단위":"unit"},field=fieldMap[m[2]],val=m[3];
+        setDamage(p=>{const enabled=p.filter(d=>d.enabled);if(no>=1&&no<=enabled.length){const tid=enabled[no-1].id;return p.map(d=>d.id===tid?{...d,[field]:field==="qty"?(Number(val)||0):val}:d)}return p});
+        reply=`✅ ${no}번 항목 ${m[2]} → "${val}" 수정 완료!`;
+      }
+      // 설계 관련 질문
+      else{ reply=getDesignAnswer(msg); }
+      setChatLog(p=>[...p,{role:"ai",text:reply}]);
+      chatEndRef.current?.scrollIntoView({behavior:"smooth"});
+    },300);
+  },[chatInput]);
+
+  /* ★ 설계내역서 작성 — 피해현황 반영하여 내역서 탭으로 이동 */
+  const handleBuildEstimate=useCallback(()=>{
+    const enabledDmg=damage.filter(d=>d.enabled);
+    if(enabledDmg.length===0){alert("피해현황에 항목이 없습니다");return}
+    // 기존 items 유지 + 피해현황 변경 반영
+    if(items.length===0){
+      // items가 비어있으면 기본 세트로 초기화
+      _nid=200; setItems(INIT_ITEMS());
+    }
+    alert(`피해현황 ${enabledDmg.length}개 항목 반영 완료!\n설계내역서 탭에서 세부 공종을 확인/편집하세요.`);
+    setView("estimate"); window.scrollTo(0,0);
+  },[damage,items]);
+  const handleSave=useCallback(async()=>{const json=JSON.stringify({v:"8.3",damage,items,chatLog,projName,projLoc,at:new Date().toISOString()},null,2);const blob=new Blob([json],{type:"application/json"});if(window.showSaveFilePicker){try{const handle=await window.showSaveFilePicker({suggestedName:`소규모주민숙원_${new Date().toISOString().slice(0,10)}.json`,types:[{description:"JSON 파일",accept:{"application/json":[".json"]}}]});const writable=await handle.createWritable();await writable.write(blob);await writable.close();alert("저장 완료!")}catch(e){if(e.name!=="AbortError")alert("저장 오류: "+e.message)}}else{const fn=window.prompt("파일명:",`소규모주민숙원_${new Date().toISOString().slice(0,10)}`);if(!fn)return;const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${fn}.json`;a.click();URL.revokeObjectURL(a.href)}},[damage,items,chatLog,projName,projLoc]);
+  const loadJ=useCallback(e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);const li=d.items||d.designItems||[];const ld=d.damage||d.dmg||[];if(li.length>0){setItems(li.map(i=>({labor:0,material:0,expense:0,...i})));setDamage(ld.length?ld:INIT_DAMAGE());setAnalyzed(true);if(d.chatLog)setChatLog(d.chatLog);if(d.projName)setProjName(d.projName);if(d.projLoc)setProjLoc(d.projLoc);_nid=Math.max(...li.map(x=>x.id),200)+1;alert(`불러오기 완료! (${li.length}개)`)}else alert("데이터 없음")}catch(err){alert("오류:"+err.message)}};r.readAsText(f);e.target.value=""},[]);
   const handleXL=useCallback(async t=>{setXlLoad(t);try{if(t==="d")await genDesignXL(items,sagub,gwangub,FEE_RATE);else if(t==="q")await genQtyXL(items,gwangub,FEE_RATE);else await genUnitXL(items,sagub,gwangub)}finally{setXlLoad(null)}},[items,sagub,gwangub]);
 
   return(
@@ -246,7 +294,7 @@ export default function App(){
         <div className="flex gap-2">{[["analysis","🔍 AI 분석"],["estimate","📊 설계내역서"]].map(([k,l])=><button key={k} onClick={()=>{setView(k);window.scrollTo(0,0)}} className={`px-5 py-2.5 text-sm rounded-lg font-bold ${view===k?"bg-blue-600 text-white shadow-md":"bg-slate-100 text-slate-700 hover:bg-slate-200"}`}>{l}</button>)}</div>
         <div className="flex gap-1 flex-wrap">
           <button onClick={handleNewWork} className="px-3 py-1.5 text-xs bg-slate-700 text-white rounded hover:bg-slate-800 font-medium">🆕 새로운작업</button>
-          <button onClick={handleSave} className="px-3 py-1.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 font-medium">💾 저장</button>
+          <button onClick={handleSave} className="px-3 py-1.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 font-medium">💾 작업저장</button>
           <button onClick={()=>jsonRef.current?.click()} className="px-3 py-1.5 text-xs bg-yellow-50 text-yellow-700 border border-yellow-200 rounded hover:bg-yellow-100">📂 불러오기</button>
           <input ref={jsonRef} type="file" accept=".json" className="hidden" onChange={loadJ}/>
           <button onClick={()=>{if(window.confirm("⚠️ 현재 작업을 반드시 저장한 후 실행하세요.\n\n저장하셨습니까?\n\n[확인] → 제잡비계산 실행\n[취소] → 돌아가서 저장"))window.open("https://bespoke-boba-03d8af.netlify.app","_blank")}} className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium">🧮 제잡비계산</button>
@@ -259,13 +307,62 @@ export default function App(){
         <section><Hd n="📷" t="현장 사진 + AI 분석"/><div className="mt-3 flex gap-3 items-center flex-wrap"><button onClick={()=>fileRef.current?.click()} className="px-4 py-2 bg-slate-600 text-white text-sm rounded-lg hover:bg-slate-700 font-medium">📷 사진 업로드</button><button onClick={handleAnalyze} disabled={analyzing} className="px-5 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow">{analyzing?"⏳ 분석 중...":"🤖 AI 분석 실행"}</button><input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f){setPhotoUrl(URL.createObjectURL(f));setAnalyzed(false)}}}/></div>{photoUrl&&<img src={photoUrl} alt="" className="mt-3 h-44 rounded-lg border cursor-pointer" onClick={()=>setPhotoModal(true)}/>}{photoModal&&photoUrl&&<div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={()=>setPhotoModal(false)}><img src={photoUrl} alt="" className="max-w-full max-h-full rounded-lg"/></div>}{!analyzed&&photoUrl&&<p className="mt-2 text-sm text-orange-600 font-medium">📌 "AI 분석 실행"을 클릭하세요.</p>}{!analyzed&&!photoUrl&&<div className="mt-4 p-10 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl text-center"><p className="text-slate-500">사진 업로드 후 AI 분석을 실행하거나, 저장 파일을 불러오세요.</p></div>}</section>
 
         {analyzed&&<>
-          <section><Hd n="1" t="종합 분석"/><div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3"><IC t="현장 제원" c="blue"><IR l="위치" v="좌안 석축 호안"/><IR l="연장" v="약 20m"/><IR l="석축" v="약 2.5m"/><IR l="세굴" v="약 1.0m"/></IC><IC t="피해 원인 / 복구 판정" c="red"><IR l="1차" v="급류 수충"/><IR l="2차" v="기초세굴→전면붕괴"/><IR l="판정" v="【개선복구】"/><IR l="설계" v="구조물 신설, 근입 D≥1.0m"/></IC></div><div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3"><h4 className="font-bold text-red-700 text-sm mb-2">관급자재 요약</h4><div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"><div><span className="text-slate-500 text-xs">품목</span><p className="font-semibold">레미콘,철근,석재,잡석</p></div><div><span className="text-slate-500 text-xs">관급자재비</span><p className="font-bold text-red-600">{fmt(gTot)}원</p></div><div><span className="text-slate-500 text-xs">수수료율</span><p>1.5%</p></div><div><span className="text-slate-500 text-xs">관급수수료</span><p className="font-bold text-red-600">{fmt(gF)}원</p></div></div></div></section>
+          {/* 공사개요 + 종합분석 + 복구계획 */}
+          <section>
+            <Hd n="0" t="공사 개요"/>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+              <div className="space-y-2">
+                <div><label className="text-xs text-slate-500 font-medium">공사명</label><input value={projName} onChange={e=>setProjName(e.target.value)} placeholder="예: ○○천 수해복구공사" className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300 mt-1"/></div>
+                <div><label className="text-xs text-slate-500 font-medium">위치</label><input value={projLoc} onChange={e=>setProjLoc(e.target.value)} placeholder="예: ○○군 ○○면 ○○리 산00번지" className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300 mt-1"/></div>
+              </div>
+              <div className="bg-slate-50 border rounded-lg p-3 text-sm space-y-1">
+                <p className="font-bold text-slate-700">공사 정보</p>
+                <p className="text-slate-500">발주처: 충청북도</p>
+                <p className="text-slate-500">단가근거: 2025년 충청북도 일위대가</p>
+                <p className="text-slate-500">복구유형: 【개선복구】</p>
+                <p className="text-slate-500">설계기준: 하천설계기준(2019), KDS 51 40 15</p>
+              </div>
+            </div>
+          </section>
+
+          <section><Hd n="1" t="종합 분석"/>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+            <IC t="현장 제원" c="blue"><IR l="위치" v="좌안 석축 호안"/><IR l="연장" v="약 20m"/><IR l="석축" v="약 2.5m (찰쌓기)"/><IR l="세굴" v="약 1.0m"/><IR l="도로" v="폭 2.0m 파손"/></IC>
+            <IC t="피해 원인 / 복구 판정" c="red"><IR l="1차" v="급류 수충 (수충부 직격)"/><IR l="2차" v="기초세굴→석축 전면붕괴"/><IR l="3차" v="도로 함몰 + 관로 노출"/><IR l="판정" v="【개선복구】"/><IR l="설계" v="구조물 신설, 근입 D≥1.0m"/></IC>
+          </div>
+
+          {/* ★ 복구계획 */}
+          <div className="mt-4 bg-slate-800 text-white rounded-lg p-4">
+            <h4 className="font-bold text-blue-300 text-sm mb-3">복구계획</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-blue-200 font-medium mb-1">복구방침</p>
+                <p className="text-slate-300 text-xs leading-relaxed">집중호우로 인한 하천 수충부 석축 전면 붕괴 구간에 대해 기존 구조물을 철거하고, 기초 근입 D=1.0m 이상의 RC 기초 위에 찰쌓기 석축(T=35cm)을 신설하여 구조적 안정성을 확보하는 개선복구를 시행한다.</p>
+              </div>
+              <div>
+                <p className="text-blue-200 font-medium mb-1">공종계획</p>
+                <ol className="text-slate-300 text-xs leading-relaxed space-y-0.5 list-decimal list-inside">
+                  <li>토공: 기존 붕괴 잔해 굴착·사토, 구조물 터파기, 뒤채움·되메우기</li>
+                  <li>구조물공: 잡석기초 다짐 → RC 기초(25-210-12) → 찰쌓기 석축 → 거푸집·철근·양생</li>
+                  <li>포장공: 파손 도로 아스팔트 절삭 후 덧씌우기</li>
+                  <li>부대공: 부직포·비닐 설치, 교통통제, 물푸기</li>
+                  <li>사면복원: 절토사면 녹화(T=10cm)</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3"><h4 className="font-bold text-red-700 text-sm mb-2">관급자재 요약</h4><div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"><div><span className="text-slate-500 text-xs">품목</span><p className="font-semibold">레미콘,철근,석재,잡석</p></div><div><span className="text-slate-500 text-xs">관급자재비</span><p className="font-bold text-red-600">{fmt(gTot)}원</p></div><div><span className="text-slate-500 text-xs">수수료율</span><p>1.5%</p></div><div><span className="text-slate-500 text-xs">관급수수료</span><p className="font-bold text-red-600">{fmt(gF)}원</p></div></div></div></section>
 
           <section><div className="flex items-center justify-between flex-wrap gap-2"><Hd n="2" t="피해현황 (개선복구 설계물량)"/><div className="flex gap-1"><button onClick={addDamage} className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 font-medium">➕ 항목추가</button><button onClick={delDamageUnchecked} className="text-xs px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 font-medium">🗑️ 선택삭제</button></div></div>
           <div className="mt-2 overflow-x-auto border rounded-lg"><table className="w-full text-sm border-collapse"><thead><tr className="bg-blue-700 text-white"><th className="border border-blue-600 px-2 py-2 w-8"><input type="checkbox" checked={allD} ref={el=>{if(el)el.indeterminate=!allD&&someD}} onChange={toggleAllD} className="w-4 h-4"/></th><th className="border border-blue-600 px-2 py-2 w-10">No</th><th className="border border-blue-600 px-3 py-2" style={{minWidth:150}}>공종 (개선복구)</th><th className="border border-blue-600 px-3 py-2">수량산출근거</th><th className="border border-blue-600 px-2 py-2 w-16">수량</th><th className="border border-blue-600 px-2 py-2 w-14">단위</th></tr></thead>
-          <tbody>{damage.map((d,i)=><tr key={d.id} className={!d.enabled?"bg-slate-100 opacity-40 line-through":!d.item?"bg-yellow-50":i%2===0?"bg-white":"bg-slate-50"}><td className="border px-2 py-1.5 text-center"><input type="checkbox" checked={d.enabled} onChange={()=>toggleD(d.id)} className="w-4 h-4"/></td><td className="border px-2 py-1.5 text-center font-medium">{i+1}</td><td className="border px-2 py-1.5"><input value={d.item} onChange={e=>updDamage(d.id,"item",e.target.value)} className="w-full bg-transparent text-sm font-medium text-blue-800 outline-none focus:bg-blue-50 rounded px-1" placeholder="공종명"/></td><td className="border px-2 py-1.5"><input value={d.basis} onChange={e=>updDamage(d.id,"basis",e.target.value)} className="w-full bg-transparent text-xs text-slate-600 outline-none focus:bg-blue-50 rounded px-1" placeholder="산출근거"/></td><td className="border px-1 py-1.5 text-center"><input type="number" value={d.qty} onChange={e=>updDamage(d.id,"qty",e.target.value)} className="w-full text-center bg-transparent text-sm font-bold outline-none focus:bg-blue-50 rounded"/></td><td className="border px-1 py-1.5 text-center"><select value={d.unit} onChange={e=>updDamage(d.id,"unit",e.target.value)} className="text-sm bg-transparent outline-none">{UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></td></tr>)}</tbody></table></div></section>
+          <tbody>{damage.map((d,i)=><tr key={d.id} className={!d.enabled?"bg-slate-100 opacity-40 line-through":!d.item?"bg-yellow-50":i%2===0?"bg-white":"bg-slate-50"}><td className="border px-2 py-1.5 text-center"><input type="checkbox" checked={d.enabled} onChange={()=>toggleD(d.id)} className="w-4 h-4"/></td><td className="border px-2 py-1.5 text-center font-medium">{i+1}</td><td className="border px-2 py-1.5"><input value={d.item} onChange={e=>updDamage(d.id,"item",e.target.value)} className="w-full bg-transparent text-sm font-medium text-blue-800 outline-none focus:bg-blue-50 rounded px-1" placeholder="공종명"/></td><td className="border px-2 py-1.5"><input value={d.basis} onChange={e=>updDamage(d.id,"basis",e.target.value)} className="w-full bg-transparent text-xs text-slate-600 outline-none focus:bg-blue-50 rounded px-1" placeholder="산출근거"/></td><td className="border px-1 py-1.5 text-center"><input type="number" value={d.qty} onChange={e=>updDamage(d.id,"qty",e.target.value)} className="w-full text-center bg-transparent text-sm font-bold outline-none focus:bg-blue-50 rounded"/></td><td className="border px-1 py-1.5 text-center"><select value={d.unit} onChange={e=>updDamage(d.id,"unit",e.target.value)} className="text-sm bg-transparent outline-none">{UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></td></tr>)}</tbody></table></div>
+            <div className="mt-3 text-center"><button onClick={handleBuildEstimate} className="px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow">📊 설계내역서 작성 (피해현황 반영)</button></div>
+          </section>
 
-          <section><Hd n="💬" t="설계 참고 질문"/><div className="border rounded-lg bg-slate-50 p-3 max-h-52 overflow-y-auto space-y-2">{chatLog.length===0&&<p className="text-slate-400 text-sm text-center py-3">예: "석축 설계기준", "기초 배근 기준"</p>}{chatLog.map((msg,i)=><div key={i} className={`flex ${msg.role==="user"?"justify-end":"justify-start"}`}><div className={`max-w-md px-3 py-2 rounded-lg text-sm whitespace-pre-line ${msg.role==="user"?"bg-blue-600 text-white":"bg-white border text-slate-700"}`}>{msg.text}</div></div>)}<div ref={chatEndRef}/></div><div className="flex gap-2 mt-2"><input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChatSend()}}} placeholder="질문 입력..." className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"/><button onClick={handleChatSend} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm">전송</button></div></section>
+          <section><Hd n="💬" t="수정.질문"/>
+          <p className="text-xs text-slate-500 mt-1 mb-2">명령: "추가: 낙석방지망 32m" → 피해현황에 반영 · 질문: "석축 설계기준" → 참고자료 안내</p>
+          <div className="border rounded-lg bg-slate-50 p-3 max-h-52 overflow-y-auto space-y-2">{chatLog.length===0&&<p className="text-slate-400 text-sm text-center py-3">명령 예시: "추가: 낙석방지망 32m", "삭제: 3", "수정: 1 수량 60"<br/>질문 예시: "석축 설계기준", "기초 배근 기준"</p>}{chatLog.map((msg,i)=><div key={i} className={`flex ${msg.role==="user"?"justify-end":"justify-start"}`}><div className={`max-w-md px-3 py-2 rounded-lg text-sm whitespace-pre-line ${msg.role==="user"?"bg-blue-600 text-white":"bg-white border text-slate-700"}`}>{msg.text}</div></div>)}<div ref={chatEndRef}/></div><div className="flex gap-2 mt-2"><input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChatSend()}}} placeholder="명령 또는 질문 입력..." className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"/><button onClick={handleChatSend} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm">전송</button></div></section>
 
           <section><Hd n="3" t="구조물 제원"/><div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3"><SpecC t="석축(찰쌓기)" items={[`H=${STRUCT.wallH}m, T=${STRUCT.wallT*100}cm`,`L=${STRUCT.wallL}m, 근입D=${STRUCT.foundD}m`]} c="blue"/><SpecC t="기초 콘크리트" items={[`${STRUCT.conSpec} (σck=21MPa)`,`B=${STRUCT.foundW}m, D=${STRUCT.foundD}m`,STRUCT.steelSpec]} c="red"/><SpecC t="잡석 기초" items={[`B=${STRUCT.foundW}m, T=${STRUCT.japsukT}m`,"부직포 하부+배면"]} c="amber"/></div></section>
 
