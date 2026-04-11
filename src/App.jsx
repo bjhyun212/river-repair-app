@@ -179,7 +179,8 @@ function AnalysisView({ totals, structSpecs, setStructSpecs, editMode, damageIte
 
   return (
     <div className="space-y-6">
-      {/* 현장 사진 */}
+      {/* 현장 사진 - 사진이 있거나 편집모드일 때만 표시 */}
+      {(imagePreview || editMode) && (
       <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
         <SectionTitle num="0" title="현장 사진" />
         <div className="mt-4">
@@ -191,12 +192,14 @@ function AnalysisView({ totals, structSpecs, setStructSpecs, editMode, damageIte
                   <span className="opacity-0 group-hover:opacity-100 text-white text-sm font-medium bg-black/50 px-3 py-1.5 rounded-lg transition-all">🔍 클릭하여 확대</span>
                 </div>
               </div>
-              <div className="flex gap-2">
-                <button onClick={()=>imageInputRef.current?.click()} className="px-3 py-1.5 bg-slate-200 text-slate-700 text-xs rounded-lg hover:bg-slate-300 font-medium">📷 사진 변경</button>
-              </div>
+              {editMode && (
+                <div className="flex gap-2">
+                  <button onClick={()=>imageInputRef.current?.click()} className="px-3 py-1.5 bg-slate-200 text-slate-700 text-xs rounded-lg hover:bg-slate-300 font-medium">📷 사진 변경</button>
+                </div>
+              )}
               <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
             </div>
-          ) : (
+          ) : editMode ? (
             <div>
               <div onClick={()=>imageInputRef.current?.click()} className="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-all">
                 <div className="text-4xl mb-3">📷</div>
@@ -205,9 +208,10 @@ function AnalysisView({ totals, structSpecs, setStructSpecs, editMode, damageIte
               </div>
               <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
             </div>
-          )}
+          ) : null}
         </div>
       </section>
+      )}
 
       {/* 종합 분석 */}
       <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
@@ -424,12 +428,39 @@ export default function App() {
   const loadFromFile = (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if(d.items)setItems(d.items);if(d.sagub)setSagub(d.sagub);if(d.gwangub)setGwangub(d.gwangub);if(d.structSpecs)setStructSpecs(d.structSpecs);if(d.damageItems)setDamageItems(d.damageItems);alert("불러오기 완료");} catch{alert("파일 오류");} };
+    reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if(d.items)setItems(d.items);if(d.sagub)setSagub(d.sagub);if(d.gwangub)setGwangub(d.gwangub);if(d.structSpecs)setStructSpecs(d.structSpecs);if(d.damageItems)setDamageItems(d.damageItems);if(d.imagePreview)setImagePreview(d.imagePreview);else setImagePreview("loaded");alert("불러오기 완료");} catch{alert("파일 오류");} };
     reader.readAsText(file); e.target.value = "";
   };
 
   return (
     <div className="min-h-screen bg-slate-50">
+
+      {/* ══════ 사진 미업로드 상태: 초기 화면 ══════ */}
+      {!imagePreview ? (
+        <div className="flex items-center justify-center min-h-screen p-4">
+          <div className="w-full max-w-lg">
+            <div className="text-center mb-8">
+              <h1 className="text-2xl font-bold text-slate-800">종합검토보고서</h1>
+              <p className="text-sm text-slate-500 mt-2">하천 수해복구 설계 분석 시스템</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-8 shadow-sm">
+              <div onClick={()=>imageInputRef.current?.click()} className="border-2 border-dashed border-slate-300 rounded-xl p-12 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-all">
+                <div className="text-5xl mb-4">📷</div>
+                <p className="text-base font-medium text-slate-700">현장 피해 사진을 첨부하세요</p>
+                <p className="text-sm text-slate-400 mt-2">클릭하여 파일 선택 (JPG, PNG)</p>
+              </div>
+              <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+              <div className="mt-6 flex justify-center gap-3">
+                <button onClick={()=>fileInputRef.current?.click()} className="px-4 py-2 bg-slate-600 text-white text-sm rounded-lg hover:bg-slate-700 font-medium">📂 이전 데이터 불러오기</button>
+                <input ref={fileInputRef} type="file" accept=".json" onChange={loadFromFile} className="hidden"/>
+              </div>
+            </div>
+            <p className="text-center text-xs text-slate-400 mt-6">2025년 단가목록 적용 (충청북도)</p>
+          </div>
+        </div>
+      ) : (
+      /* ══════ 사진 업로드 완료: 보고서 전체 ══════ */
+      <>
       {/* 상단 네비게이션 */}
       <div className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4">
@@ -491,6 +522,8 @@ export default function App() {
         <p>상세 수량산출 근거는 엑셀 파일 참조</p>
         <p className="mt-1">종합검토보고서 v7.1 — 2025년 단가목록 적용 (충청북도)</p>
       </div>
+      </>
+      )}
     </div>
   );
 }
