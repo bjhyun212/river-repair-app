@@ -172,9 +172,42 @@ if(customItems.length){r++;wsc(ws,r,1,"[ 직접입력 단가 ]",{...TS,font:{bol
 r++;wsc(ws,r,1,"[ 사급·관급 자재 단가 ]",{...TS,font:{bold:true,color:{rgb:"B45309"}}});for(let c=0;c<9;c++)if(c!==1)wsc(ws,r,c,"",TS);r++;["품명","규격","자재단가","","","","","구분","출처"].forEach((v,c)=>wsc(ws,r,c,v,{...HS,fill:{fgColor:{rgb:"D97706"}}}));r++;[...sagub,...gwangub].forEach(i=>{wsc(ws,r,0,"",TS);wsc(ws,r,1,i.name,TS);wsc(ws,r,2,i.spec,TS);wsc(ws,r,3,i.unitPrice,NS);for(let c=4;c<7;c++)wsc(ws,r,c,"",TS);const isGw=i.id>=200;wsc(ws,r,7,isGw?"관급":"사급",{...TS,font:{color:{rgb:isGw?"DC2626":"EA580C"}}});wsc(ws,r,8,i.source,TS);r++});
 ws["!ref"]=X.utils.encode_range({s:{r:0,c:0},e:{r,c:8}});X.utils.book_append_sheet(wb,ws,"일위대가");X.writeFile(wb,`일위대가_${new Date().toISOString().slice(0,10).replace(/-/g,"")}.xlsx`)}catch(e){alert("오류: "+e.message)}}
 
-/* 설계참고 채팅 */
-const DESIGN_REFS={"석축":["하천설계기준(2019) 제7장 호안","KDS 51 40 15 석축 및 돌쌓기","찰쌓기: 1:0.3~1:0.5 경사, 부직포+뒤채움","기초 근입: 최소 1.0m"],"기초":["KDS 14 20 00 콘크리트 설계기준","기초 σck=21MPa (25-210-12)","철근 SD400, HD13@200","근입깊이: 세굴깊이+여유≥1.0m"],"호안":["하천설계기준(2019) 제7장","수충부: 개선복구 원칙","세굴방지: 근고공 또는 근입"],"복구":["자연재해대책법 시행령 제47조","원인복구/개선복구 구분","개선복구: 구조 보강, 기초 신설"],"단가":["2025년 충청북도 일위대가","관급: 3,000만원 이상 또는 발주처 지정","사급: 시공사 직접구매"]};
-function getDesignAnswer(q){for(const[key,refs]of Object.entries(DESIGN_REFS))if(q.includes(key))return`📚 ${key} 관련:\n\n${refs.map((r,i)=>`${i+1}. ${r}`).join("\n")}`;return`키워드(석축,기초,호안,복구,단가)를 포함하여 질문해주세요.`}
+/* 설계참고 AI 응답 — Claude API 직접 호출 */
+async function askDesignAI(question) {
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: question }],
+        system: "당신은 30년 경력의 토목직 공무원이자 하천 수해복구 설계 전문가입니다. 한국의 건설공사 설계기준, 품셈, 시방서에 정통합니다. 주요 참고기준: 하천설계기준(2019), KDS 51 40 15 석축 및 돌쌓기, KDS 14 20 00 콘크리트 구조 설계, 자연재해대책법, 2025년 충청북도 일위대가 목록표. 질문에 대해 전문적이고 실무적인 답변을 한국어로 제공하세요. 답변은 간결하되 핵심을 놓치지 마세요."
+      })
+    });
+    if (!response.ok) throw new Error(`API ${response.status}`);
+    const data = await response.json();
+    const text = data.content?.map(c => c.type === "text" ? c.text : "").join("") || "";
+    return text || "응답을 받지 못했습니다.";
+  } catch (e) {
+    // API 호출 실패 시 로컬 폴백
+    return getLocalAnswer(question);
+  }
+}
+
+function getLocalAnswer(q) {
+  const DB = {
+    "석축":["석축은 자연석 또는 가공석을 쌓아 토압·수압을 지지하는 구조물","찰쌓기: 시멘트 모르타르로 접착, 메쌓기: 뒷채움만으로 고정","적용기준: 하천설계기준(2019) 제7장, KDS 51 40 15","기초 근입: 세굴깊이+0.5m 이상 (최소 1.0m)"],
+    "옹벽":["옹벽은 콘크리트로 제작된 토류 구조물 (중력식/캔틸레버/역T형 등)","석축 대비: 높이 3m 이상, 구조계산 필요, 공사비 높음","적용기준: KDS 14 20 72 옹벽, KDS 11 80 05 토류벽"],
+    "기초":["기초 콘크리트: σck=21MPa (25-210-12), 철근 SD400","근입깊이: 세굴깊이+여유고 ≥1.0m (하천설계기준)","잡석기초: 기계다짐 T=0.3~0.5m, 부직포 하부 설치"],
+    "호안":["호안: 하천 제방 또는 호안의 세굴·침식 방지 구조물","종류: 석축호안, 콘크리트블록호안, 돌망태, 식생호안","수충부: 개선복구 원칙 (구조물 신설+기초 보강)"],
+    "복구":["수해복구: 자연재해대책법 시행령 제47조","원인복구: 기존 구조물과 동일 규격으로 복구","개선복구: 구조적 취약점 보강 (기초 신설, 근입 확보)","판정: 수충부/사면붕괴/기초세굴 → 무조건 개선복구"],
+    "단가":["2025년 충청북도 일위대가 목록표 적용","구성: 노무비+재료비+경비 = 합계","관급자재: 3,000만원 이상 → 발주처 직접 지급","사급자재: 3,000만원 미만 → 시공사 직접 구매"],
+    "차이":["석축 vs 콘크리트옹벽 비교:","① 재료: 석축=자연석, 옹벽=철근콘크리트","② 높이: 석축 3m 이하 적합, 옹벽 3m 이상","③ 비용: 석축이 소규모에서 경제적","④ 시공: 석축=숙련공 필요, 옹벽=거푸집+타설","⑤ 기준: 석축=KDS 51 40 15, 옹벽=KDS 14 20 72"],
+  };
+  for (const [key, refs] of Object.entries(DB)) if (q.includes(key)) return `📚 ${key} 관련:\n\n${refs.join("\n")}`;
+  return `AI 엔진에 연결할 수 없습니다.\n\n로컬 키워드: 석축, 옹벽, 기초, 호안, 복구, 단가, 차이\n\n배포 환경에서는 AI가 모든 질문에 전문적으로 답변합니다.`;
+}
 
 /* ============================================================ MAIN */
 export default function App(){
@@ -236,39 +269,49 @@ export default function App(){
   const gTot=gwangub.reduce((s,i)=>s+Math.round(i.qty*i.unitPrice),0);
   const gF=Math.round(gTot*FEE_RATE),grand=sunG+sT+gTot+gF;
 
-  /* ★ 수정.질문 — 명령어 파싱 + 설계 Q&A */
-  const handleChatSend=useCallback(()=>{
+  /* ★ 수정.질문 — 명령어 파싱 + AI Q&A */
+  const handleChatSend=useCallback(async()=>{
     if(!chatInput.trim()) return;
     const msg=chatInput.trim();
     setChatLog(p=>[...p,{role:"user",text:msg}]);
     setChatInput("");
-    setTimeout(()=>{
-      let reply="";
-      // 추가 명령: "추가: 낙석방지망 32m" 또는 "추가: 공종명 수량 단위"
-      const addMatch=msg.match(/^추가[:：]\s*(.+?)\s+(\d+\.?\d*)\s*(m²|m³|m|hr|ton|일|식|㎡|㎥|본|개소|km)?$/);
-      if(addMatch){
-        const newItem={id:Date.now(),item:addMatch[1],basis:"수정.질문에서 추가",qty:Number(addMatch[2]),unit:addMatch[3]||"식",enabled:true};
-        setDamage(p=>[...p,newItem]);
-        reply=`✅ 피해현황에 추가 완료!\n\n공종: ${addMatch[1]}\n수량: ${addMatch[2]} ${addMatch[3]||"식"}\n\n피해현황 테이블을 확인하세요.`;
+
+    let reply="";
+    // 추가 명령
+    const addMatch=msg.match(/^추가[:：]\s*(.+?)\s+(\d+\.?\d*)\s*(m²|m³|m|hr|ton|일|식|㎡|㎥|본|개소|km)?$/);
+    if(addMatch){
+      const newItem={id:Date.now(),item:addMatch[1],basis:"수정.질문에서 추가",qty:Number(addMatch[2]),unit:addMatch[3]||"식",enabled:true};
+      setDamage(p=>[...p,newItem]);
+      reply=`✅ 피해현황에 추가 완료!\n\n공종: ${addMatch[1]}\n수량: ${addMatch[2]} ${addMatch[3]||"식"}`;
+    }
+    // 삭제 명령
+    else if(/^삭제[:：]\s*(\d+)$/.test(msg)){
+      const no=Number(msg.match(/(\d+)/)[1]);
+      setDamage(p=>{const enabled=p.filter(d=>d.enabled);if(no>=1&&no<=enabled.length){const target=enabled[no-1];return p.filter(d=>d.id!==target.id)}return p});
+      reply=`✅ ${no}번 항목 삭제 완료!`;
+    }
+    // 수정 명령
+    else if(/^수정[:：]\s*(\d+)\s+(수량|공종|산출근거|단위)\s+(.+)$/.test(msg)){
+      const m2=msg.match(/^수정[:：]\s*(\d+)\s+(수량|공종|산출근거|단위)\s+(.+)$/);
+      const no=Number(m2[1]),fieldMap={"수량":"qty","공종":"item","산출근거":"basis","단위":"unit"},field=fieldMap[m2[2]],val=m2[3];
+      setDamage(p=>{const enabled=p.filter(d=>d.enabled);if(no>=1&&no<=enabled.length){const tid=enabled[no-1].id;return p.map(d=>d.id===tid?{...d,[field]:field==="qty"?(Number(val)||0):val}:d)}return p});
+      reply=`✅ ${no}번 항목 ${m2[2]} → "${val}" 수정 완료!`;
+    }
+    // 설계 관련 질문 → AI 호출
+    else {
+      setChatLog(p=>[...p,{role:"ai",text:"⏳ AI 답변 생성 중..."}]);
+      try {
+        const answer = await askDesignAI(msg);
+        setChatLog(p=>p.map(m=>m.text==="⏳ AI 답변 생성 중..."?{...m,text:answer}:m));
+      } catch(e) {
+        setChatLog(p=>p.map(m=>m.text==="⏳ AI 답변 생성 중..."?{...m,text:getLocalAnswer(msg)}:m));
       }
-      // 삭제 명령: "삭제: 3" (No번호)
-      else if(/^삭제[:：]\s*(\d+)$/.test(msg)){
-        const no=Number(msg.match(/(\d+)/)[1]);
-        setDamage(p=>{const enabled=p.filter(d=>d.enabled);if(no>=1&&no<=enabled.length){const target=enabled[no-1];return p.filter(d=>d.id!==target.id)}return p});
-        reply=`✅ ${no}번 항목 삭제 완료!`;
-      }
-      // 수정 명령: "수정: 1 수량 60" 또는 "수정: 2 공종 호안블럭설치"
-      else if(/^수정[:：]\s*(\d+)\s+(수량|공종|산출근거|단위)\s+(.+)$/.test(msg)){
-        const m=msg.match(/^수정[:：]\s*(\d+)\s+(수량|공종|산출근거|단위)\s+(.+)$/);
-        const no=Number(m[1]),fieldMap={"수량":"qty","공종":"item","산출근거":"basis","단위":"unit"},field=fieldMap[m[2]],val=m[3];
-        setDamage(p=>{const enabled=p.filter(d=>d.enabled);if(no>=1&&no<=enabled.length){const tid=enabled[no-1].id;return p.map(d=>d.id===tid?{...d,[field]:field==="qty"?(Number(val)||0):val}:d)}return p});
-        reply=`✅ ${no}번 항목 ${m[2]} → "${val}" 수정 완료!`;
-      }
-      // 설계 관련 질문
-      else{ reply=getDesignAnswer(msg); }
-      setChatLog(p=>[...p,{role:"ai",text:reply}]);
       chatEndRef.current?.scrollIntoView({behavior:"smooth"});
-    },300);
+      return;
+    }
+    // 명령 처리 결과
+    setChatLog(p=>[...p,{role:"ai",text:reply}]);
+    chatEndRef.current?.scrollIntoView({behavior:"smooth"});
   },[chatInput]);
 
   /* ★ 설계내역서 작성 — 피해현황 반영하여 내역서 탭으로 이동 */
@@ -307,7 +350,7 @@ export default function App(){
         <section><Hd n="📷" t="현장 사진 + AI 분석"/><div className="mt-3 flex gap-3 items-center flex-wrap"><button onClick={()=>fileRef.current?.click()} className="px-4 py-2 bg-slate-600 text-white text-sm rounded-lg hover:bg-slate-700 font-medium">📷 사진 업로드</button><button onClick={handleAnalyze} disabled={analyzing} className="px-5 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow">{analyzing?"⏳ 분석 중...":"🤖 AI 분석 실행"}</button><input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f){setPhotoUrl(URL.createObjectURL(f));setAnalyzed(false)}}}/></div>{photoUrl&&<img src={photoUrl} alt="" className="mt-3 h-44 rounded-lg border cursor-pointer" onClick={()=>setPhotoModal(true)}/>}{photoModal&&photoUrl&&<div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={()=>setPhotoModal(false)}><img src={photoUrl} alt="" className="max-w-full max-h-full rounded-lg"/></div>}{!analyzed&&photoUrl&&<p className="mt-2 text-sm text-orange-600 font-medium">📌 "AI 분석 실행"을 클릭하세요.</p>}{!analyzed&&!photoUrl&&<div className="mt-4 p-10 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl text-center"><p className="text-slate-500">사진 업로드 후 AI 분석을 실행하거나, 저장 파일을 불러오세요.</p></div>}</section>
 
         {analyzed&&<>
-          {/* 공사개요 + 종합분석 + 복구계획 */}
+          {/* 공사개요 (공사명/위치 입력만) */}
           <section>
             <Hd n="0" t="공사 개요"/>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
@@ -315,24 +358,12 @@ export default function App(){
                 <div><label className="text-xs text-slate-500 font-medium">공사명</label><input value={projName} onChange={e=>setProjName(e.target.value)} placeholder="예: ○○천 수해복구공사" className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300 mt-1"/></div>
                 <div><label className="text-xs text-slate-500 font-medium">위치</label><input value={projLoc} onChange={e=>setProjLoc(e.target.value)} placeholder="예: ○○군 ○○면 ○○리 산00번지" className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300 mt-1"/></div>
               </div>
-              <div className="bg-slate-50 border rounded-lg p-3 text-sm space-y-1">
-                <p className="font-bold text-slate-700">공사 정보</p>
-                <p className="text-slate-500">발주처: 충청북도</p>
-                <p className="text-slate-500">단가근거: 2025년 충청북도 일위대가</p>
-                <p className="text-slate-500">복구유형: 【개선복구】</p>
-                <p className="text-slate-500">설계기준: 하천설계기준(2019), KDS 51 40 15</p>
-              </div>
             </div>
           </section>
 
-          <section><Hd n="1" t="종합 분석"/>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-            <IC t="현장 제원" c="blue"><IR l="위치" v="좌안 석축 호안"/><IR l="연장" v="약 20m"/><IR l="석축" v="약 2.5m (찰쌓기)"/><IR l="세굴" v="약 1.0m"/><IR l="도로" v="폭 2.0m 파손"/></IC>
-            <IC t="피해 원인 / 복구 판정" c="red"><IR l="1차" v="급류 수충 (수충부 직격)"/><IR l="2차" v="기초세굴→석축 전면붕괴"/><IR l="3차" v="도로 함몰 + 관로 노출"/><IR l="판정" v="【개선복구】"/><IR l="설계" v="구조물 신설, 근입 D≥1.0m"/></IC>
-          </div>
-
-          {/* ★ 복구계획 */}
-          <div className="mt-4 bg-slate-800 text-white rounded-lg p-4">
+          {/* 복구계획 (사진 분석 결과에 따라 동적 생성) */}
+          <section>
+          <div className="bg-slate-800 text-white rounded-lg p-4">
             <h4 className="font-bold text-blue-300 text-sm mb-3">복구계획</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div>
@@ -351,8 +382,9 @@ export default function App(){
               </div>
             </div>
           </div>
+          </section>
 
-          <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3"><h4 className="font-bold text-red-700 text-sm mb-2">관급자재 요약</h4><div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"><div><span className="text-slate-500 text-xs">품목</span><p className="font-semibold">레미콘,철근,석재,잡석</p></div><div><span className="text-slate-500 text-xs">관급자재비</span><p className="font-bold text-red-600">{fmt(gTot)}원</p></div><div><span className="text-slate-500 text-xs">수수료율</span><p>1.5%</p></div><div><span className="text-slate-500 text-xs">관급수수료</span><p className="font-bold text-red-600">{fmt(gF)}원</p></div></div></div></section>
+          <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3"><h4 className="font-bold text-red-700 text-sm mb-2">관급자재 요약</h4><div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"><div><span className="text-slate-500 text-xs">품목</span><p className="font-semibold">레미콘,철근,석재,잡석</p></div><div><span className="text-slate-500 text-xs">관급자재비</span><p className="font-bold text-red-600">{fmt(gTot)}원</p></div><div><span className="text-slate-500 text-xs">수수료율</span><p>1.5%</p></div><div><span className="text-slate-500 text-xs">관급수수료</span><p className="font-bold text-red-600">{fmt(gF)}원</p></div></div></div>
 
           <section><div className="flex items-center justify-between flex-wrap gap-2"><Hd n="2" t="피해현황 (개선복구 설계물량)"/><div className="flex gap-1"><button onClick={addDamage} className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 font-medium">➕ 항목추가</button><button onClick={delDamageUnchecked} className="text-xs px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 font-medium">🗑️ 선택삭제</button></div></div>
           <div className="mt-2 overflow-x-auto border rounded-lg"><table className="w-full text-sm border-collapse"><thead><tr className="bg-blue-700 text-white"><th className="border border-blue-600 px-2 py-2 w-8"><input type="checkbox" checked={allD} ref={el=>{if(el)el.indeterminate=!allD&&someD}} onChange={toggleAllD} className="w-4 h-4"/></th><th className="border border-blue-600 px-2 py-2 w-10">No</th><th className="border border-blue-600 px-3 py-2" style={{minWidth:150}}>공종 (개선복구)</th><th className="border border-blue-600 px-3 py-2">수량산출근거</th><th className="border border-blue-600 px-2 py-2 w-16">수량</th><th className="border border-blue-600 px-2 py-2 w-14">단위</th></tr></thead>
@@ -361,8 +393,8 @@ export default function App(){
           </section>
 
           <section><Hd n="💬" t="수정.질문"/>
-          <p className="text-xs text-slate-500 mt-1 mb-2">명령: "추가: 낙석방지망 32m" → 피해현황에 반영 · 질문: "석축 설계기준" → 참고자료 안내</p>
-          <div className="border rounded-lg bg-slate-50 p-3 max-h-52 overflow-y-auto space-y-2">{chatLog.length===0&&<p className="text-slate-400 text-sm text-center py-3">명령 예시: "추가: 낙석방지망 32m", "삭제: 3", "수정: 1 수량 60"<br/>질문 예시: "석축 설계기준", "기초 배근 기준"</p>}{chatLog.map((msg,i)=><div key={i} className={`flex ${msg.role==="user"?"justify-end":"justify-start"}`}><div className={`max-w-md px-3 py-2 rounded-lg text-sm whitespace-pre-line ${msg.role==="user"?"bg-blue-600 text-white":"bg-white border text-slate-700"}`}>{msg.text}</div></div>)}<div ref={chatEndRef}/></div><div className="flex gap-2 mt-2"><input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChatSend()}}} placeholder="명령 또는 질문 입력..." className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"/><button onClick={handleChatSend} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm">전송</button></div></section>
+          <p className="text-xs text-slate-500 mt-1 mb-2">명령: "추가: 낙석방지망 32m" · 질문: 설계·공법·기준 등 무엇이든 (AI가 전문적으로 답변)</p>
+          <div className="border rounded-lg bg-slate-50 p-3 max-h-52 overflow-y-auto space-y-2">{chatLog.length===0&&<p className="text-slate-400 text-sm text-center py-3">명령: "추가: 낙석방지망 32m", "삭제: 3", "수정: 1 수량 60"<br/>질문: "석축과 옹벽의 차이점", "기초 근입깊이 기준" 등 자유롭게</p>}{chatLog.map((msg,i)=><div key={i} className={`flex ${msg.role==="user"?"justify-end":"justify-start"}`}><div className={`max-w-md px-3 py-2 rounded-lg text-sm whitespace-pre-line ${msg.role==="user"?"bg-blue-600 text-white":"bg-white border text-slate-700"}`}>{msg.text}</div></div>)}<div ref={chatEndRef}/></div><div className="flex gap-2 mt-2"><input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChatSend()}}} placeholder="명령 또는 질문 입력..." className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"/><button onClick={handleChatSend} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm">전송</button></div></section>
 
           <section><Hd n="3" t="구조물 제원"/><div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3"><SpecC t="석축(찰쌓기)" items={[`H=${STRUCT.wallH}m, T=${STRUCT.wallT*100}cm`,`L=${STRUCT.wallL}m, 근입D=${STRUCT.foundD}m`]} c="blue"/><SpecC t="기초 콘크리트" items={[`${STRUCT.conSpec} (σck=21MPa)`,`B=${STRUCT.foundW}m, D=${STRUCT.foundD}m`,STRUCT.steelSpec]} c="red"/><SpecC t="잡석 기초" items={[`B=${STRUCT.foundW}m, T=${STRUCT.japsukT}m`,"부직포 하부+배면"]} c="amber"/></div></section>
 
