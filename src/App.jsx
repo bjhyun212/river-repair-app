@@ -11,6 +11,18 @@ const CAT_OPTIONS = [["1.","1.토공"],["2.","2.구조물"],["3.","3.포장"],["
 const CAT_NAMES = {"1.":"토공","2.":"구조물공","3.":"포장공","4.":"부대공"};
 const CATS = ["1.","2.","3.","4."];
 
+/* API 호출 헬퍼 — 환경 자동 감지 (Netlify→직접API→에러 순서) */
+async function callAI(body) {
+  const urls=["/.netlify/functions/ai-proxy","https://api.anthropic.com/v1/messages"];
+  for(const url of urls){
+    try{
+      const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      if(r.ok) return await r.json();
+    }catch(e){/* 다음 URL */}
+  }
+  throw new Error("AI 서버 연결 실패");
+}
+
 const PRICE_DB = {
   "#.22":{name:"표토제거(답외)",spec:"T=20CM,굴삭기0.7㎥",unit:"m²",labor:191,material:59,expense:80,total:330},
   "#.28":{name:"흙깍기",spec:"보통토사,소규모",unit:"m³",labor:1472,material:774,expense:747,total:2993},
@@ -176,18 +188,12 @@ ws["!ref"]=X.utils.encode_range({s:{r:0,c:0},e:{r,c:8}});X.utils.book_append_she
 async function askDesignAI(question, currentDamage) {
   const dmgList = (currentDamage||[]).filter(d=>d.enabled).map((d,i)=>({no:i+1,item:d.item,qty:d.qty,unit:d.unit}));
   try {
-    const response = await fetch("/.netlify/functions/ai-proxy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const data = await callAI({
         model: "claude-sonnet-4-20250514",
         max_tokens: 2000,
         messages: [{ role: "user", content: `현재 피해현황: ${JSON.stringify(dmgList)}\n\n사용자 요청: ${question}` }],
         system: `당신은 30년 경력의 토목직 공무원이자 소규모주민숙원사업 설계 전문가입니다.\n이 사업은 단순 하자보수가 아닌 【개량공법에 의한 전면적 개선설계】입니다.\n기존 구조물의 근본적 문제를 해결하는 개량 방향으로 답변하세요.\n\n사용자의 요청이 피해현황 수정/변경 요청인 경우:\n반드시 JSON으로만 응답: {"action":"modify","damage":[{"item":"공종명","basis":"산출근거","qty":숫자,"unit":"단위"}],"message":"수정내용요약"}\n\n설계/공법/기준 질문인 경우:\nJSON으로 응답: {"action":"answer","message":"상세하고 전문적인 답변. 관련 설계기준(KDS 등) 구체적 인용. 실무 관점의 장단점, 적용조건, 시공방법 포함. 최소 300자 이상."}\n\n참고: 하천설계기준(2019), KDS 51 40 15 석축, KDS 14 20 72 옹벽, KDS 11 80 05 토류벽, 자연재해대책법, 2025 충북 일위대가`
-      })
     });
-    if (!response.ok) throw new Error(`API ${response.status}`);
-    const data = await response.json();
     return data.content?.map(c => c.type === "text" ? c.text : "").join("") || "";
   } catch (e) { throw e; }
 }
@@ -228,10 +234,8 @@ export default function App(){
     try{
       const base64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=()=>rej(new Error("읽기실패"));r.readAsDataURL(photoFile)});
       const mt=photoFile.type||"image/jpeg";
-      const resp=await fetch("/.netlify/functions/ai-proxy",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,system:`당신은 30년 경력의 토목직 공무원이자 하천 수해복구 설계 전문가입니다.\n사진을 분석하여 반드시 아래 JSON 형식으로만 응답하세요. JSON 외의 텍스트는 절대 포함하지 마세요.\n\n{"recovery":{"method":"복구방침(피해상황+복구방향 구체적 서술)","steps":["1.토공:...","2.구조물공:...","3.포장공:...","4.부대공:...","5.기타:..."]},"damage":[{"item":"피해공종명","basis":"수량산출근거(폭×높이×길이=수량)","qty":숫자,"unit":"㎡/㎥/m"}],"designItems":[{"cat":"1./2./3./4.","name":"공종명","spec":"규격","unit":"m²등","qty":숫자,"priceId":"#.번호"}]}\n\n분석원칙 (소규모주민숙원사업 = 개량설계):\n- 이 사업은 단순 하자보수가 아닌 【개량공법에 의한 전면적 개선설계】입니다\n- 사진의 표면적 증상(균열,파손)뿐 아니라 근본 원인(구조적 결함,설계미비,배수불량,기초부실 등)을 분석하세요\n- 기존 구조물의 문제점을 완전히 해결하는 개선방향을 제시하세요\n- 예: 단순 균열보수(X) → 구조물 전면 철거 후 개량 공법으로 재시공(O)\n- 예: 석축 부분보수(X) → RC옹벽 또는 보강토옹벽으로 공법 변경(O)\n- 예: 포장 패칭(X) → 기층부터 전면 재포장(O)\n- 구조적 취약점→무조건 개선복구, 기초근입D≥1.0m\n- 배수체계 개선(유공관,맹암거,측구 등) 반드시 포함 검토\n- 안전시설(가드레일,낙석방지망 등) 추가 설치 검토\n- 피해물량은 사진에서 추정가능한 치수로 산출하되, 개량설계 관점에서 충분한 물량 확보\n- priceId: #.22표토제거,#.28흙깍기,#.57구조물터파기,#.68뒤채움,#.70되메우기,#.77기초지정잡석,#.87사면녹화,#.127사토운반,#.155석축쌓기,#.193레미콘타설,#.204합판거푸집,#.216철근가공,#.276콘크리트양생,#.280부직포,#.281비닐,#.282물푸기,#.326아스팔트덧씌우기,#.481교통통제\n- 사진에 해당하지 않는 공종은 포함하지 마세요`,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mt,data:base64}},{type:"text",text:"이 현장 사진을 분석하여 피해현황과 복구 설계물량을 JSON으로 응답해주세요."}]}]})});
-      if(!resp.ok)throw new Error(`API ${resp.status}`);
-      const data=await resp.json();
-      const text=data.content?.map(c=>c.type==="text"?c.text:"").join("")||"";
+      const resp_data=await callAI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:`당신은 30년 경력의 토목직 공무원이자 하천 수해복구 설계 전문가입니다.\n사진을 분석하여 반드시 아래 JSON 형식으로만 응답하세요. JSON 외의 텍스트는 절대 포함하지 마세요.\n\n{"recovery":{"method":"복구방침(피해상황+복구방향 구체적 서술)","steps":["1.토공:...","2.구조물공:...","3.포장공:...","4.부대공:...","5.기타:..."]},"damage":[{"item":"피해공종명","basis":"수량산출근거(폭×높이×길이=수량)","qty":숫자,"unit":"㎡/㎥/m"}],"designItems":[{"cat":"1./2./3./4.","name":"공종명","spec":"규격","unit":"m²등","qty":숫자,"priceId":"#.번호"}]}\n\n분석원칙 (소규모주민숙원사업 = 개량설계):\n- 이 사업은 단순 하자보수가 아닌 【개량공법에 의한 전면적 개선설계】입니다\n- 사진의 표면적 증상(균열,파손)뿐 아니라 근본 원인(구조적 결함,설계미비,배수불량,기초부실 등)을 분석하세요\n- 기존 구조물의 문제점을 완전히 해결하는 개선방향을 제시하세요\n- 예: 단순 균열보수(X) → 구조물 전면 철거 후 개량 공법으로 재시공(O)\n- 예: 석축 부분보수(X) → RC옹벽 또는 보강토옹벽으로 공법 변경(O)\n- 예: 포장 패칭(X) → 기층부터 전면 재포장(O)\n- 구조적 취약점→무조건 개선복구, 기초근입D≥1.0m\n- 배수체계 개선(유공관,맹암거,측구 등) 반드시 포함 검토\n- 안전시설(가드레일,낙석방지망 등) 추가 설치 검토\n- 피해물량은 사진에서 추정가능한 치수로 산출하되, 개량설계 관점에서 충분한 물량 확보\n- priceId: #.22표토제거,#.28흙깍기,#.57구조물터파기,#.68뒤채움,#.70되메우기,#.77기초지정잡석,#.87사면녹화,#.127사토운반,#.155석축쌓기,#.193레미콘타설,#.204합판거푸집,#.216철근가공,#.276콘크리트양생,#.280부직포,#.281비닐,#.282물푸기,#.326아스팔트덧씌우기,#.481교통통제\n- 사진에 해당하지 않는 공종은 포함하지 마세요`,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mt,data:base64}},{type:"text",text:"이 현장 사진을 분석하여 피해현황과 복구 설계물량을 JSON으로 응답해주세요."}]}]});
+      const text=resp_data.content?.map(c=>c.type==="text"?c.text:"").join("")||"";
       const jsonMatch=text.match(/\{[\s\S]*\}/);
       if(!jsonMatch)throw new Error("JSON파싱실패");
       const result=JSON.parse(jsonMatch[0]);
@@ -299,9 +303,7 @@ export default function App(){
       // 현재 피해현황 데이터를 컨텍스트로 전달
       const currentDamage = damage.filter(d=>d.enabled).map((d,i)=>`${i+1}. ${d.item} (${d.qty}${d.unit}) - ${d.basis}`).join("\n");
 
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
+      const resp_raw = await callAI({
           model:"claude-sonnet-4-20250514", max_tokens:1500,
           system: `당신은 30년 경력의 토목직 공무원이자 수해복구 설계 전문가입니다.
 
@@ -318,11 +320,9 @@ ${currentDamage || "(없음)"}
 주요 단가ID: #.22표토제거,#.28흙깍기,#.57구조물터파기,#.68뒤채움,#.77기초지정잡석,#.155석축쌓기,#.193레미콘타설,#.204합판거푸집,#.216철근가공,#.276콘크리트양생,#.280부직포,#.326아스팔트덧씌우기,#.481교통통제
 답변은 한국어로, 실무적이고 구체적으로 하세요.`,
           messages:[{role:"user",content:msg}]
-        })
       });
 
-      if(!resp.ok) throw new Error(`API ${resp.status}`);
-      const data = await resp.json();
+      const data = resp_raw;
       let text = data.content?.map(c=>c.type==="text"?c.text:"").join("")||"";
 
       // 데이터 변경 JSON이 포함되어 있는지 확인
