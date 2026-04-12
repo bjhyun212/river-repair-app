@@ -7,9 +7,9 @@ import { useState, useRef, useCallback, useMemo, Fragment, memo } from "react";
 
 const fmt = (n) => (n ?? 0).toLocaleString("ko-KR");
 const UNITS = ["m²","m³","m","hr","ton","일","식","본","개소","km","㎡","㎥"];
-const CAT_OPTIONS = [["1.","1.토공"],["2.","2.구조물"],["3.","3.포장"],["4.","4.부대"]];
-const CAT_NAMES = {"1.":"토공","2.":"구조물공","3.":"포장공","4.":"부대공"};
-const CATS = ["1.","2.","3.","4."];
+const CAT_OPTIONS = [["1.","1.토공"],["2.","2.구조물공"],["3.","3.배수공"],["4.","4.호안공"],["5.","5.포장공"],["6.","6.부대공"]];
+const CAT_NAMES = {"1.":"토공","2.":"구조물공","3.":"배수공","4.":"호안공","5.":"포장공","6.":"부대공"};
+const CATS = ["1.","2.","3.","4.","5.","6."];
 
 /* API 호출 헬퍼 — 환경 자동 감지 (Netlify→직접API→에러 순서) */
 async function callAI(body) {
@@ -58,6 +58,10 @@ const PRICE_DB = {
   "#.102":{name:"진동전압관부설",spec:"D=600mm,고무링접합",unit:"m",labor:65688,material:8503,expense:11102,total:85293},
   "#.103":{name:"진동전압관부설",spec:"D=800mm,고무링접합",unit:"m",labor:85479,material:11065,expense:14448,total:110992},
   "#.105":{name:"진동전압관부설",spec:"D=1000mm,고무링접합",unit:"m",labor:116786,material:13438,expense:20774,total:150998},
+  "#.163":{name:"호안블럭붙이기",spec:"1.0x1.0(기계)",unit:"m²",labor:7693,material:319,expense:1478,total:9490},
+  "#.149":{name:"돌붙임",spec:"찰붙임,T=35cm이하",unit:"m²",labor:48636,material:3282,expense:6258,total:58176},
+  "#.158":{name:"전석쌓기",spec:"",unit:"m²",labor:62551,material:6747,expense:9800,total:79098},
+  "#.164":{name:"보강토옹벽",spec:"블록식",unit:"m²",labor:90337,material:3330,expense:15396,total:109063},
   "#.306":{name:"보조기층포설및다짐",spec:"인력,소규모",unit:"m³",labor:11408,material:1410,expense:1577,total:14395},
   "#.330":{name:"아스팔트절삭",spec:"소규모포장",unit:"m²",labor:1009,material:626,expense:619,total:2254},
   "#.331":{name:"아스팔트덧씌우기",spec:"소규모포장",unit:"m²",labor:2245,material:328,expense:489,total:3062},
@@ -71,6 +75,7 @@ const AUTO_PRICE_MAP=[
   [["가드레일","가드","방호울타리","방호펜스"],"#.445","표준레일(지주간격2m,2W)"],
   [["낙석방지망","낙석망"],"#.453","철망설치(기계식)"],
   [["낙석방지책","낙석책"],"#.451","표준구간(3.0×3.0)"],
+  [["호안블럭","호안블록","호안"],"#.163","1.0x1.0"],
   [["안전시설목"],"#.460",""],
   [["아스팔트절삭","절삭"],"#.330","소규모포장"],
   [["덧씌우기","오버레이"],"#.331","소규모포장"],
@@ -246,7 +251,7 @@ const TTS2=(rgb,fc="000000")=>({font:{bold:true,color:{rgb:fc},sz:11},fill:{fgCo
 function wsc(ws,r,c,v,s){const ref=window.XLSX.utils.encode_cell({r,c});if(!ws[ref])ws[ref]={};ws[ref].v=v;if(typeof v==="number")ws[ref].t="n";else if(typeof v==="string"&&v.startsWith("=")){ws[ref].f=v.slice(1);ws[ref].t="n";delete ws[ref].v}else ws[ref].t="s";if(s)ws[ref].s=s}
 
 /* ★ 엑셀 생성 시 getPrice 사용 */
-async function genDesignXL(items,sagub,gwangub,fr){try{const X=await loadXLSX(),wb=X.utils.book_new(),act=items.filter(i=>i.enabled),ws={};ws["!cols"]=[{wch:8},{wch:24},{wch:28},{wch:10},{wch:6},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14}];wsc(ws,0,0,"설 계 내 역 서",{font:{bold:true,sz:14},alignment:{horizontal:"center"}});ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:12}}];wsc(ws,1,0,"2025년 충청북도 일위대가",{font:{sz:9,color:{rgb:"666666"}},alignment:{horizontal:"center"}});ws["!merges"].push({s:{r:1,c:0},e:{r:1,c:12}});["공종","품 명","규 격","수량","단위","합 계","","노 무 비","","재 료 비","","경 비",""].forEach((v,c)=>wsc(ws,2,c,v,HS));["","","","","","단가","금액","단가","금액","단가","금액","단가","금액"].forEach((v,c)=>{if(c>=5)wsc(ws,3,c,v,HS)});for(let c=0;c<5;c++)ws["!merges"].push({s:{r:2,c},e:{r:3,c}});ws["!merges"].push({s:{r:2,c:5},e:{r:2,c:6}},{s:{r:2,c:7},e:{r:2,c:8}},{s:{r:2,c:9},e:{r:2,c:10}},{s:{r:2,c:11},e:{r:2,c:12}});let r=4;const catRows={};const sunRow=r;r++;CATS.forEach(cc=>{const ci=act.filter(i=>i.cat===cc);if(!ci.length)return;const cr=r;r++;catRows[cc]={row:cr,items:[]};wsc(ws,cr,0,cc,CST("DBEAFE"));wsc(ws,cr,1,CAT_NAMES[cc],CST("DBEAFE"));for(let c=2;c<13;c++)wsc(ws,cr,c,"",CST("DBEAFE"));ci.forEach(item=>{const p=getPrice(item),ir=r;r++;catRows[cc].items.push(ir);wsc(ws,ir,0,"",TS);wsc(ws,ir,1,item.name,TS);wsc(ws,ir,2,item.spec||"",TS);wsc(ws,ir,3,item.qty,{...NS,numFmt:"#,##0.0##"});wsc(ws,ir,4,item.unit,{...TS,alignment:{horizontal:"center"}});wsc(ws,ir,5,`=H${ir+1}+J${ir+1}+L${ir+1}`,NS);wsc(ws,ir,6,`=D${ir+1}*F${ir+1}`,NS);wsc(ws,ir,7,p.labor,NS);wsc(ws,ir,8,`=D${ir+1}*H${ir+1}`,NS);wsc(ws,ir,9,p.material,NS);wsc(ws,ir,10,`=D${ir+1}*J${ir+1}`,NS);wsc(ws,ir,11,p.expense,NS);wsc(ws,ir,12,`=D${ir+1}*L${ir+1}`,NS)});const irs=catRows[cc].items;if(irs.length)[6,8,10,12].forEach(c=>{const col=String.fromCharCode(65+c);wsc(ws,cr,c,`=SUM(${col}${irs[0]+1}:${col}${irs[irs.length-1]+1})`,{...CST("DBEAFE"),numFmt:"#,##0"})})});const sunS=TTS2("D6DCE4");wsc(ws,sunRow,0,"",sunS);wsc(ws,sunRow,1,"순 공 사 비",sunS);for(let c=2;c<13;c++)wsc(ws,sunRow,c,"",sunS);ws["!merges"].push({s:{r:sunRow,c:0},e:{r:sunRow,c:1}});const uc=CATS.filter(c=>catRows[c]);[6,8,10,12].forEach(c=>{const col=String.fromCharCode(65+c);const refs=uc.map(cc=>`${col}${catRows[cc].row+1}`).join("+");if(refs)wsc(ws,sunRow,c,`=${refs}`,{...sunS,numFmt:"#,##0"})});const sRow=r;r++;wsc(ws,sRow,0,"5.",CST("FFF7ED"));wsc(ws,sRow,1,"사급자재대",CST("FFF7ED"));for(let c=2;c<13;c++)wsc(ws,sRow,c,"",CST("FFF7ED"));const si=[];sagub.forEach(item=>{const ir=r;r++;si.push(ir);wsc(ws,ir,0,"",TS);wsc(ws,ir,1,item.name,TS);wsc(ws,ir,2,item.spec,TS);wsc(ws,ir,3,item.qty,NS);wsc(ws,ir,4,item.unit,{...TS,alignment:{horizontal:"center"}});wsc(ws,ir,5,item.unitPrice,NS);wsc(ws,ir,6,`=D${ir+1}*F${ir+1}`,NS);for(let c=7;c<13;c++)wsc(ws,ir,c,"",TS)});if(si.length)wsc(ws,sRow,6,`=SUM(G${si[0]+1}:G${si[si.length-1]+1})`,{...CST("FFF7ED"),numFmt:"#,##0"});const gRow=r;r++;wsc(ws,gRow,0,"6.",CST("FEF2F2"));wsc(ws,gRow,1,"관급자재대",CST("FEF2F2"));for(let c=2;c<13;c++)wsc(ws,gRow,c,"",CST("FEF2F2"));const gi=[];gwangub.forEach(item=>{const ir=r;r++;gi.push(ir);wsc(ws,ir,0,item.sub||"",TS);wsc(ws,ir,1,item.name,TS);wsc(ws,ir,2,item.spec,TS);wsc(ws,ir,3,item.qty,NS);wsc(ws,ir,4,item.unit,{...TS,alignment:{horizontal:"center"}});wsc(ws,ir,5,item.unitPrice,NS);wsc(ws,ir,6,`=D${ir+1}*F${ir+1}`,NS);for(let c=7;c<13;c++)wsc(ws,ir,c,"",TS)});if(gi.length)wsc(ws,gRow,6,`=SUM(G${gi[0]+1}:G${gi[gi.length-1]+1})`,{...CST("FEF2F2"),numFmt:"#,##0"});const fRow=r;r++;wsc(ws,fRow,0,"",CST("FEF2F2"));wsc(ws,fRow,1,"관급수수료 (1.5%)",CST("FEF2F2"));for(let c=2;c<13;c++)wsc(ws,fRow,c,"",CST("FEF2F2"));wsc(ws,fRow,6,`=ROUND(G${gRow+1}*0.015,0)`,{...CST("FEF2F2"),numFmt:"#,##0"});const grRow=r;r++;const gS=TTS2("1E3A5F","FFFFFF");wsc(ws,grRow,0,"",gS);wsc(ws,grRow,1,"총 공 사 비",gS);for(let c=2;c<13;c++)wsc(ws,grRow,c,"",gS);ws["!merges"].push({s:{r:grRow,c:0},e:{r:grRow,c:1}});wsc(ws,grRow,6,`=G${sunRow+1}+G${sRow+1}+G${gRow+1}+G${fRow+1}`,{...gS,numFmt:"#,##0"});ws["!ref"]=X.utils.encode_range({s:{r:0,c:0},e:{r,c:12}});X.utils.book_append_sheet(wb,ws,"내역서");X.writeFile(wb,`설계내역서_${new Date().toISOString().slice(0,10).replace(/-/g,"")}.xlsx`)}catch(e){alert("오류: "+e.message)}}
+async function genDesignXL(items,sagub,gwangub,fr){try{const X=await loadXLSX(),wb=X.utils.book_new(),act=items.filter(i=>i.enabled),ws={};ws["!cols"]=[{wch:8},{wch:24},{wch:28},{wch:10},{wch:6},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14}];wsc(ws,0,0,"설 계 내 역 서",{font:{bold:true,sz:14},alignment:{horizontal:"center"}});ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:12}}];wsc(ws,1,0,"2025년 충청북도 일위대가",{font:{sz:9,color:{rgb:"666666"}},alignment:{horizontal:"center"}});ws["!merges"].push({s:{r:1,c:0},e:{r:1,c:12}});["공종","품 명","규 격","수량","단위","합 계","","노 무 비","","재 료 비","","경 비",""].forEach((v,c)=>wsc(ws,2,c,v,HS));["","","","","","단가","금액","단가","금액","단가","금액","단가","금액"].forEach((v,c)=>{if(c>=5)wsc(ws,3,c,v,HS)});for(let c=0;c<5;c++)ws["!merges"].push({s:{r:2,c},e:{r:3,c}});ws["!merges"].push({s:{r:2,c:5},e:{r:2,c:6}},{s:{r:2,c:7},e:{r:2,c:8}},{s:{r:2,c:9},e:{r:2,c:10}},{s:{r:2,c:11},e:{r:2,c:12}});let r=4;const catRows={};const sunRow=r;r++;CATS.forEach(cc=>{const ci=act.filter(i=>i.cat===cc);if(!ci.length)return;const cr=r;r++;catRows[cc]={row:cr,items:[]};wsc(ws,cr,0,cc,CST("DBEAFE"));wsc(ws,cr,1,CAT_NAMES[cc],CST("DBEAFE"));for(let c=2;c<13;c++)wsc(ws,cr,c,"",CST("DBEAFE"));ci.forEach(item=>{const p=getPrice(item),ir=r;r++;catRows[cc].items.push(ir);wsc(ws,ir,0,"",TS);wsc(ws,ir,1,item.name,TS);wsc(ws,ir,2,item.spec||"",TS);wsc(ws,ir,3,item.qty,{...NS,numFmt:"#,##0.0##"});wsc(ws,ir,4,item.unit,{...TS,alignment:{horizontal:"center"}});wsc(ws,ir,5,`=H${ir+1}+J${ir+1}+L${ir+1}`,NS);wsc(ws,ir,6,`=D${ir+1}*F${ir+1}`,NS);wsc(ws,ir,7,p.labor,NS);wsc(ws,ir,8,`=D${ir+1}*H${ir+1}`,NS);wsc(ws,ir,9,p.material,NS);wsc(ws,ir,10,`=D${ir+1}*J${ir+1}`,NS);wsc(ws,ir,11,p.expense,NS);wsc(ws,ir,12,`=D${ir+1}*L${ir+1}`,NS)});const irs=catRows[cc].items;if(irs.length)[6,8,10,12].forEach(c=>{const col=String.fromCharCode(65+c);wsc(ws,cr,c,`=SUM(${col}${irs[0]+1}:${col}${irs[irs.length-1]+1})`,{...CST("DBEAFE"),numFmt:"#,##0"})})});const sunS=TTS2("D6DCE4");wsc(ws,sunRow,0,"",sunS);wsc(ws,sunRow,1,"순 공 사 비",sunS);for(let c=2;c<13;c++)wsc(ws,sunRow,c,"",sunS);ws["!merges"].push({s:{r:sunRow,c:0},e:{r:sunRow,c:1}});const uc=CATS.filter(c=>catRows[c]);[6,8,10,12].forEach(c=>{const col=String.fromCharCode(65+c);const refs=uc.map(cc=>`${col}${catRows[cc].row+1}`).join("+");if(refs)wsc(ws,sunRow,c,`=${refs}`,{...sunS,numFmt:"#,##0"})});const sRow=r;r++;const sNum=Object.keys(catRows).length+1;wsc(ws,sRow,0,`${sNum}.`,CST("FFF7ED"));wsc(ws,sRow,1,"사급자재대",CST("FFF7ED"));for(let c=2;c<13;c++)wsc(ws,sRow,c,"",CST("FFF7ED"));const si=[];sagub.forEach(item=>{const ir=r;r++;si.push(ir);wsc(ws,ir,0,"",TS);wsc(ws,ir,1,item.name,TS);wsc(ws,ir,2,item.spec,TS);wsc(ws,ir,3,item.qty,NS);wsc(ws,ir,4,item.unit,{...TS,alignment:{horizontal:"center"}});wsc(ws,ir,5,item.unitPrice,NS);wsc(ws,ir,6,`=D${ir+1}*F${ir+1}`,NS);for(let c=7;c<9;c++)wsc(ws,ir,c,"",TS);wsc(ws,ir,9,item.unitPrice,NS);wsc(ws,ir,10,`=D${ir+1}*J${ir+1}`,NS);for(let c=11;c<13;c++)wsc(ws,ir,c,"",TS)});if(si.length){wsc(ws,sRow,6,`=SUM(G${si[0]+1}:G${si[si.length-1]+1})`,{...CST("FFF7ED"),numFmt:"#,##0"});wsc(ws,sRow,10,`=SUM(K${si[0]+1}:K${si[si.length-1]+1})`,{...CST("FFF7ED"),numFmt:"#,##0"})};void(0);if(0)wsc(ws,sRow,6,`=SUM(G${si[0]+1}:G${si[si.length-1]+1})`,{...CST("FFF7ED"),numFmt:"#,##0"});const gRow=r;r++;wsc(ws,gRow,0,`${sNum+1}.`,CST("FEF2F2"));wsc(ws,gRow,1,"관급자재대",CST("FEF2F2"));for(let c=2;c<13;c++)wsc(ws,gRow,c,"",CST("FEF2F2"));const gi=[];gwangub.forEach(item=>{const ir=r;r++;gi.push(ir);wsc(ws,ir,0,item.sub||"",TS);wsc(ws,ir,1,item.name,TS);wsc(ws,ir,2,item.spec,TS);wsc(ws,ir,3,item.qty,NS);wsc(ws,ir,4,item.unit,{...TS,alignment:{horizontal:"center"}});wsc(ws,ir,5,item.unitPrice,NS);wsc(ws,ir,6,`=D${ir+1}*F${ir+1}`,NS);for(let c=7;c<9;c++)wsc(ws,ir,c,"",TS);wsc(ws,ir,9,item.unitPrice,NS);wsc(ws,ir,10,`=D${ir+1}*J${ir+1}`,NS);for(let c=11;c<13;c++)wsc(ws,ir,c,"",TS)});if(gi.length){wsc(ws,gRow,6,`=SUM(G${gi[0]+1}:G${gi[gi.length-1]+1})`,{...CST("FEF2F2"),numFmt:"#,##0"});wsc(ws,gRow,10,`=SUM(K${gi[0]+1}:K${gi[gi.length-1]+1})`,{...CST("FEF2F2"),numFmt:"#,##0"})};void(0);if(0)wsc(ws,gRow,6,`=SUM(G${gi[0]+1}:G${gi[gi.length-1]+1})`,{...CST("FEF2F2"),numFmt:"#,##0"});const fRow=r;r++;wsc(ws,fRow,0,"",CST("FEF2F2"));wsc(ws,fRow,1,"관급수수료 (1.5%)",CST("FEF2F2"));for(let c=2;c<13;c++)wsc(ws,fRow,c,"",CST("FEF2F2"));wsc(ws,fRow,6,`=ROUND(G${gRow+1}*0.015,0)`,{...CST("FEF2F2"),numFmt:"#,##0"});const grRow=r;r++;const gS=TTS2("1E3A5F","FFFFFF");wsc(ws,grRow,0,"",gS);wsc(ws,grRow,1,"총 공 사 비",gS);for(let c=2;c<13;c++)wsc(ws,grRow,c,"",gS);ws["!merges"].push({s:{r:grRow,c:0},e:{r:grRow,c:1}});wsc(ws,grRow,6,`=G${sunRow+1}+G${sRow+1}+G${gRow+1}+G${fRow+1}`,{...gS,numFmt:"#,##0"});ws["!ref"]=X.utils.encode_range({s:{r:0,c:0},e:{r,c:12}});X.utils.book_append_sheet(wb,ws,"내역서");X.writeFile(wb,`설계내역서_${new Date().toISOString().slice(0,10).replace(/-/g,"")}.xlsx`)}catch(e){alert("오류: "+e.message)}}
 
 async function genQtyXL(items,gwangub,fr){try{const X=await loadXLSX(),wb=X.utils.book_new(),act=items.filter(i=>i.enabled),ws={};ws["!cols"]=[{wch:5},{wch:22},{wch:28},{wch:7},{wch:10},{wch:65},{wch:15}];wsc(ws,0,0,"수 량 산 출 서",{font:{bold:true,sz:14},alignment:{horizontal:"center"}});ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:6}}];["No","공종명","규격","단위","수량","산출근거","비고"].forEach((v,c)=>wsc(ws,1,c,v,HS));act.forEach((item,i)=>{const r=i+2;wsc(ws,r,0,i+1,{...TS,alignment:{horizontal:"center"}});wsc(ws,r,1,item.name,TS);wsc(ws,r,2,item.spec||"",TS);wsc(ws,r,3,item.unit,{...TS,alignment:{horizontal:"center"}});wsc(ws,r,4,item.qty,{...NS,numFmt:item.unit==="ton"?"#,##0.000":"#,##0"});wsc(ws,r,5,item.basis||`설계수량=${item.qty}${item.unit}`,TS);wsc(ws,r,6,getPriceBasis(item),{...TS,font:{color:{rgb:item.priceId&&PRICE_DB[item.priceId]?"2563EB":"DC2626"}}})});const gTot=gwangub.reduce((s,i)=>s+Math.round(i.qty*i.unitPrice),0),fee=Math.round(gTot*fr),lr=act.length+2;wsc(ws,lr,0,act.length+1,{...TS,alignment:{horizontal:"center"}});wsc(ws,lr,1,"관급수수료",TS);wsc(ws,lr,2,"×1.5%",TS);wsc(ws,lr,3,"식",{...TS,alignment:{horizontal:"center"}});wsc(ws,lr,4,1,NS);wsc(ws,lr,5,`관급자재비${fmt(gTot)}원×1.5%=${fmt(fee)}원`,TS);wsc(ws,lr,6,"",TS);ws["!ref"]=X.utils.encode_range({s:{r:0,c:0},e:{r:lr,c:6}});X.utils.book_append_sheet(wb,ws,"수량산출서");X.writeFile(wb,`수량산출서_${new Date().toISOString().slice(0,10).replace(/-/g,"")}.xlsx`)}catch(e){alert("오류: "+e.message)}}
 
@@ -458,8 +463,10 @@ ${currentDamage || "(없음)"}
 
     // ── Step 1: 피해현황 분류 ──
     const structItems=[],paveItems=[],slopeItems=[],drainItems=[],etcItems=[];
+    const hoanItems=[];
     enabledDmg.forEach(d=>{
-      if(d.item.match(/석축|옹벽|RC|역.*T|호안|콘크리트.*벽|기초|구조물/i)) structItems.push(d);
+      if(d.item.match(/호안|돌붙임|전석|블록.*붙/i)) hoanItems.push(d);
+      else if(d.item.match(/석축|옹벽|RC|역.*T|콘크리트.*벽|기초|구조물/i)) structItems.push(d);
       else if(d.item.match(/포장|도로|아스팔트|아스콘/)) paveItems.push(d);
       else if(d.item.match(/사면|녹화|법면/)) slopeItems.push(d);
       else if(d.item.match(/측구|배수|수로|산마루|플륨|흄관|관로|관부설/)) drainItems.push(d);
@@ -547,61 +554,126 @@ ${currentDamage || "(없음)"}
       }
     });
 
-    // 배수공 (측구/흄관 등) — 상세 치수 산출
+    // 3. 배수공 — 맥락 감지: 공종명+규격+산출근거에서 종류 자동 판별
     drainItems.forEach(d=>{
       const L=d.qty, label=d.item;
-      // 흄관/관로인 경우 별도 처리
-      if(d.item.match(/흄관|관부설|관로|플륨/)){
-        const dia=d.basis?.match(/(\d+)\s*mm/)?Number(d.basis.match(/(\d+)\s*mm/)[1]):600;
+      const ctx=(d.item+"|"+d.basis+"|"+(d.spec||"")).toLowerCase();  // 전체 맥락 문자열
+
+      // ── 흄관/원형관 감지 ──
+      if(ctx.match(/흄관|원형관|vr관|원심력|진동전압|배수관.*mm|관부설|pipe/)){
+        const dia=ctx.match(/(\d{3,4})\s*mm/)?Number(ctx.match(/(\d{3,4})\s*mm/)[1]):ctx.match(/φ(\d+)/)?Number(ctx.match(/φ(\d+)/)[1]):600;
         const pId=dia>=1000?"#.105":dia>=800?"#.103":dia>=600?"#.102":dia>=450?"#.101":"#.100";
-        push("2.","구조물터파기","육상토사,기계100%","m³",Math.round(L*1.2*1.0)||10,"#.57",`${label}: 폭1.2m×깊이1.0m×길이${L}m=${Math.round(L*1.2)}㎥`);
-        push("2.","기초지정","잡석","m³",+(L*0.6*0.15).toFixed(1),"#.77",`${label}: 폭0.6m×두께0.15m×길이${L}m=${(L*0.6*0.15).toFixed(1)}㎥`);
-        push("2.",`흄관부설(φ${dia}mm)`,"고무링접합","m",L,pId,`${label}: φ${dia}mm×길이${L}m`);
-        push("1.","뒤채움 및 다짐","소형장비","m³",Math.round(L*0.8)||5,"#.68",`${label}: 관 주변 뒤채움 폭0.8m×길이${L}m`);
-        push("1.","되메우기 및 다짐","소형장비","m³",Math.round(L*0.4)||3,"#.70",`${label}: 잔여 되메우기`);
-        return;  // 아래 측구 로직 건너뛰기
+        const digW=+(dia/1000+0.6).toFixed(1);  // 터파기폭=관경+여유
+        const digD=+(dia/1000+0.4).toFixed(1);  // 터파기깊이=관경+기초+여유
+        const digV=Math.round(digW*digD*L)||10;
+        push("3.","구조물터파기","육상토사,기계100%","m³",digV,"#.57",`${label}: 폭${digW}m×깊이${digD}m×길이${L}m=${digV}㎥`);
+        push("3.","기초지정","잡석","m³",+(digW*0.15*L).toFixed(1),"#.77",`${label}: 폭${digW}m×두께0.15m×길이${L}m`);
+        push("3.",`흄관부설(φ${dia}mm)`,"고무링접합","m",L,pId,`${label}: φ${dia}mm×길이${L}m`);
+        push("3.","뒤채움 및 다짐","소형장비","m³",Math.round(digV*0.6)||5,"#.68",`${label}: 관 주변 뒤채움`);
+        push("1.","되메우기 및 다짐","소형장비","m³",Math.round(digV*0.3)||3,"#.70",`${label}: 잔여 되메우기`);
       }
-      // 산마루측구 단면: 폭0.4m×깊이0.4m, 벽두께0.1m
-      const W=0.4, H=0.4, T=0.1;
-      const digV=Math.round((W+0.4)*0.6*L*10)/10;  // 터파기: (측구폭+여유)×깊이×길이
-      const japV=Math.round(W*T*L*10)/10;           // 잡석: 폭×두께×길이
-      const conV=Math.round(((W+T*2)*H-(W*W))*L*100)/100||Math.round(L*0.04*10)/10; // 콘크리트 단면적×길이
-      const formA=Math.round((H*2+W)*L*10)/10;      // 거푸집: (양벽높이+바닥폭)×길이
-      const backV=Math.round(0.2*H*L*10)/10;        // 뒤채움: 배면두께×높이×길이
-      push("2.","구조물터파기","육상토사,기계100%","m³",digV,"#.57",`${label}: 폭${W+0.4}m×깊이0.6m×길이${L}m=${digV}㎥`);
-      push("2.","기초지정","잡석","m³",japV,"#.77",`${label}: 폭${W}m×두께${T}m×길이${L}m=${japV}㎥`);
-      push("2.","레미콘타설(펌프차)","무근(S:8-12cm),TYPE-Ⅱ","m³",conV||Math.round(L*0.04*10)/10,"#.185",`${label}: 단면적(벽2개+바닥)×길이${L}m=${conV}㎥`);
-      push("2.","합판거푸집","(4회) 보통","m²",formA,"#.204",`${label}: (양벽${H}m×2+바닥${W}m)×길이${L}m=${formA}㎡`);
-      push("2.","콘크리트양생","습윤양생","m²",formA,"#.276",`${label}: 양생면적=(양벽+바닥)×길이${L}m=${formA}㎡`);
-      push("1.","뒤채움 및 다짐","소형장비","m³",backV,"#.68",`${label}: 배면두께0.2m×높이${H}m×길이${L}m=${backV}㎥`);
+      // ── 암거/BOX 감지 ──
+      else if(ctx.match(/암거|box|박스|맹암거/)){
+        const bw=ctx.match(/(\d+\.?\d*)\s*[x×]\s*(\d+\.?\d*)/);
+        const boxW=bw?Number(bw[1]):0.6, boxH=bw?Number(bw[2]):0.6;
+        const digW=+(boxW+0.8).toFixed(1), digD=+(boxH+0.5).toFixed(1);
+        const digV=Math.round(digW*digD*L)||10;
+        const conV=+((boxW+0.2)*(boxH+0.2)-boxW*boxH)*L.toFixed(1)||Math.round(L*0.15);
+        const formA=Math.round((boxH*2+boxW)*L);
+        push("3.","구조물터파기","육상토사,기계100%","m³",digV,"#.57",`${label}: 폭${digW}m×깊이${digD}m×길이${L}m=${digV}㎥`);
+        push("3.","기초지정","잡석","m³",+(digW*0.15*L).toFixed(1),"#.77",`${label}: 폭${digW}m×두께0.15m×길이${L}m`);
+        push("3.","레미콘타설(펌프차)","무근(S:8-12cm),TYPE-Ⅱ","m³",conV,"#.185",`${label}: 암거 단면적×길이${L}m=${conV}㎥`);
+        push("3.","합판거푸집","(4회) 보통","m²",formA,"#.204",`${label}: (양벽${boxH}m×2+바닥${boxW}m)×길이${L}m=${formA}㎡`);
+        push("3.","콘크리트양생","습윤양생","m²",formA,"#.276",`${label}: 양생면적=${formA}㎡`);
+        push("3.","뒤채움 및 다짐","소형장비","m³",Math.round(digV*0.4)||5,"#.68",`${label}: 암거 주변 뒤채움`);
+      }
+      // ── 유공관 감지 ──
+      else if(ctx.match(/유공관|유공|드레인/)){
+        const dia2=ctx.match(/(\d+)\s*mm/)?Number(ctx.match(/(\d+)\s*mm/)[1]):100;
+        push("3.","구조물터파기","육상토사,기계100%","m³",Math.round(L*0.4*0.5)||3,"#.57",`${label}: 폭0.4m×깊이0.5m×길이${L}m`);
+        push("3.",`유공관설치(φ${dia2}mm)`,`PVC φ${dia2}mm`,"m",L,"",`${label}: φ${dia2}mm×${L}m`);
+        push("3.","뒤채움 및 다짐","소형장비","m³",Math.round(L*0.2)||2,"#.68",`${label}: 쇄석 뒤채움`);
+      }
+      // ── 측구/산마루측구/L형측구 감지 ──
+      else if(ctx.match(/측구|수로|산마루/)){
+        const W=0.4, Hc=0.4, T=0.1;
+        const digV=Math.round((W+0.4)*0.6*L*10)/10;
+        const japV=Math.round(W*T*L*10)/10;
+        const conV=Math.round(((W+T*2)*Hc-(W*W))*L*100)/100||Math.round(L*0.04*10)/10;
+        const formA=Math.round((Hc*2+W)*L*10)/10;
+        const backV=Math.round(0.2*Hc*L*10)/10;
+        push("3.","구조물터파기","육상토사,기계100%","m³",digV,"#.57",`${label}: 폭${(W+0.4).toFixed(1)}m×깊이0.6m×길이${L}m=${digV}㎥`);
+        push("3.","기초지정","잡석","m³",japV,"#.77",`${label}: 폭${W}m×두께${T}m×길이${L}m=${japV}㎥`);
+        push("3.","레미콘타설(펌프차)","무근(S:8-12cm),TYPE-Ⅱ","m³",conV,"#.185",`${label}: 단면적(벽2+바닥)×길이${L}m=${conV}㎥`);
+        push("3.","합판거푸집","(4회) 보통","m²",formA,"#.204",`${label}: (양벽${Hc}m×2+바닥${W}m)×길이${L}m=${formA}㎡`);
+        push("3.","콘크리트양생","습윤양생","m²",formA,"#.276",`${label}: 양생면적=${formA}㎡`);
+        push("3.","뒤채움 및 다짐","소형장비","m³",backV,"#.68",`${label}: 배면 0.2m×${Hc}m×${L}m=${backV}㎥`);
+      }
+      // ── 기타 배수공 (미분류) ──
+      else {
+        push("3.","구조물터파기","육상토사,기계100%","m³",Math.round(L*0.5)||5,"#.57",`${label}: 터파기`);
+        push("3.","레미콘타설(펌프차)","무근(S:8-12cm),TYPE-Ⅱ","m³",Math.round(L*0.1)||2,"#.185",`${label}: 콘크리트`);
+        push("3.",d.item,"","m",L,"",`${label}: ${L}m`);
+        push("3.","뒤채움 및 다짐","소형장비","m³",Math.round(L*0.3)||3,"#.68",`${label}: 뒤채움`);
+      }
     });
 
-    // 되메우기 (공통)
-    if(allStructQty>0) push("1.","되메우기 및 다짐","소형장비","m³",Math.round(allStructQty*0.2)||10,"#.70",`되메우기: 잔여공간 되메우기 및 다짐=${Math.round(allStructQty*0.2)}㎥`);
+    // 4. 호안공 — 호안블록, 돌붙임, 전석 등
+    hoanItems.forEach(d=>{
+      const A=d.qty, label=d.item;
+      const dim2=parseDim(d.basis);
+      const H=dim2.H||2, L=dim2.L||(Math.round(A/H)||20);
+      if(d.item.match(/블록/)){
+        push("4.","구조물터파기","육상토사,기계100%","m³",Math.round(L*1.5*0.5)||10,"#.57",`${label}: 폭1.5m×깊이0.5m×길이${L}m`);
+        push("4.","기초지정","잡석","m³",Math.round(L*1.0*0.2*10)/10||3,"#.77",`${label}: 폭1.0m×두께0.2m×길이${L}m`);
+        push("4.","호안블럭붙이기","1.0x1.0(기계)","m²",A,"#.163",`${label}: 높이${H}m×길이${L}m=${A}㎡`);
+        push("4.","부직포설치","","m²",A,"#.280",`${label}: 호안 배면 부직포=${A}㎡`);
+        push("1.","뒤채움 및 다짐","소형장비","m³",Math.round(A*0.3)||10,"#.68",`${label}: 배면 뒤채움`);
+      } else if(d.item.match(/돌붙임/)){
+        push("4.","돌붙임","찰붙임,T=35cm이하","m²",A,"#.149",`${label}: ${A}㎡`);
+        push("4.","부직포설치","","m²",A,"#.280",`${label}: 배면=${A}㎡`);
+      } else if(d.item.match(/전석/)){
+        push("4.","전석쌓기","","m²",A,"#.158",`${label}: ${A}㎡`);
+        push("4.","부직포설치","","m²",A,"#.280",`${label}: 배면=${A}㎡`);
+      } else {
+        // 기타 호안공
+        push("4.","구조물터파기","육상토사,기계100%","m³",Math.round(A*0.3)||5,"#.57",`${label}: 터파기`);
+        push("4.","레미콘타설(펌프차)","무근(S:8-12cm),TYPE-Ⅱ","m³",Math.round(A*0.1)||3,"#.185",`${label}: 기초콘크리트`);
+        push("4.",d.item,"","m²",A,"",`${label}: ${A}㎡`);
+        push("4.","부직포설치","","m²",A,"#.280",`${label}: 배면=${A}㎡`);
+        push("1.","뒤채움 및 다짐","소형장비","m³",Math.round(A*0.2)||5,"#.68",`${label}: 배면`);
+      }
+    });
 
-    // 3. 포장공 — 기층/표층 세부 공종 반영
+    // allStructQty에 호안물량 추가
+    const hoQty=hoanItems.reduce((s,d)=>s+d.qty,0);
+
+    // 되메우기 (공통)
+    if(allStructQty+hoQty>0) push("1.","되메우기 및 다짐","소형장비","m³",Math.round((allStructQty+hoQty)*0.2)||10,"#.70",`되메우기: 잔여공간 되메우기 및 다짐=${Math.round(allStructQty*0.2)}㎥`);
+
+    // 5. 포장공 — 기층/표층 세부 공종 반영
     paveItems.forEach(d=>{
       const A=d.qty, label=d.item, ob=d.basis||"";
       if(d.item.match(/기층/)){
         const japV=+(A*0.1).toFixed(1);
-        push("3.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}(${ob}): 보조기층 면적${A}㎡×T=0.1m=${japV}㎥`);
-        push("3.","프라임코팅","RS(C)-3,기계","m²",A,"#.310",`${label}(${ob}): 기층하부 프라임코팅 면적=${A}㎡`);
-        push("3.","기층아스콘포설및다짐","소형장비(5-7cm)","m²",A,"#.314",`${label}(${ob}): 기층아스콘 T=5~7cm, 면적=${A}㎡`);
+        push("5.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}(${ob}): 보조기층 면적${A}㎡×T=0.1m=${japV}㎥`);
+        push("5.","프라임코팅","RS(C)-3,기계","m²",A,"#.310",`${label}(${ob}): 기층하부 프라임코팅 면적=${A}㎡`);
+        push("5.","기층아스콘포설및다짐","소형장비(5-7cm)","m²",A,"#.314",`${label}(${ob}): 기층아스콘 T=5~7cm, 면적=${A}㎡`);
       }
       else if(d.item.match(/표층/)){
-        push("3.","택코팅","RS(C)-4,기계","m²",A,"#.312",`${label}(${ob}): 표층하부 택코팅 면적=${A}㎡`);
-        push("3.","표층아스콘포설및다짐","소형장비","m²",A,"#.321",`${label}(${ob}): 표층아스콘 T=5cm, 면적=${A}㎡`);
+        push("5.","택코팅","RS(C)-4,기계","m²",A,"#.312",`${label}(${ob}): 표층하부 택코팅 면적=${A}㎡`);
+        push("5.","표층아스콘포설및다짐","소형장비","m²",A,"#.321",`${label}(${ob}): 표층아스콘 T=5cm, 면적=${A}㎡`);
       }
       else if(d.item.match(/절삭|덧씌/)){
-        push("3.","절삭후아스팔트덧씌우기","B-Type(1회절삭,1회포장)","m²",A,"#.326",`${label}(${ob}): 절삭+덧씌우기 면적=${A}㎡`);
+        push("5.","절삭후아스팔트덧씌우기","B-Type(1회절삭,1회포장)","m²",A,"#.326",`${label}(${ob}): 절삭+덧씌우기 면적=${A}㎡`);
       }
       else {
         const japV=+(A*0.15).toFixed(1);
-        push("3.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}(${ob}): 보조기층 면적${A}㎡×T=0.15m=${japV}㎥`);
-        push("3.","프라임코팅","RS(C)-3,기계","m²",A,"#.310",`${label}(${ob}): 기층하부 프라임코팅=${A}㎡`);
-        push("3.","기층아스콘포설및다짐","소형장비(5-7cm)","m²",A,"#.314",`${label}(${ob}): 기층아스콘 T=5~7cm=${A}㎡`);
-        push("3.","택코팅","RS(C)-4,기계","m²",A,"#.312",`${label}(${ob}): 표층하부 택코팅=${A}㎡`);
-        push("3.","표층아스콘포설및다짐","소형장비","m²",A,"#.321",`${label}(${ob}): 표층아스콘 T=5cm=${A}㎡`);
+        push("5.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}(${ob}): 보조기층 면적${A}㎡×T=0.15m=${japV}㎥`);
+        push("5.","프라임코팅","RS(C)-3,기계","m²",A,"#.310",`${label}(${ob}): 기층하부 프라임코팅=${A}㎡`);
+        push("5.","기층아스콘포설및다짐","소형장비(5-7cm)","m²",A,"#.314",`${label}(${ob}): 기층아스콘 T=5~7cm=${A}㎡`);
+        push("5.","택코팅","RS(C)-4,기계","m²",A,"#.312",`${label}(${ob}): 표층하부 택코팅=${A}㎡`);
+        push("5.","표층아스콘포설및다짐","소형장비","m²",A,"#.321",`${label}(${ob}): 표층아스콘 T=5cm=${A}㎡`);
       }
     });
 
@@ -613,20 +685,21 @@ ${currentDamage || "(없음)"}
     // 4. 부대공 — 소분류별 근거 상세
     const bStructNames=structItems.map(d=>`${d.item}${d.qty}${d.unit}`).join("+");
     const bDrainNames=drainItems.map(d=>`${d.item}${d.qty}${d.unit}`).join("+");
-    const bArea=allStructQty+drainItems.reduce((s,d)=>s+d.qty,0);
+    const bHoanNames=hoanItems.map(d=>`${d.item}${d.qty}${d.unit}`).join("+");
+    const bArea=allStructQty+drainItems.reduce((s,d)=>s+d.qty,0)+hoQty;
     if(bArea>0){
-      push("4.","부직포설치","","m²",Math.round(bArea*1.0)||30,"#.280",`부직포: 구조물하부+배면 [${bStructNames}${bDrainNames?"+"+bDrainNames:""}]=${Math.round(bArea)}㎡`);
-      push("4.","비닐깔기","","m²",Math.round(bArea*0.4)||15,"#.281",`비닐: 기초하부 방습 [${bStructNames}]×0.4=${Math.round(bArea*0.4)}㎡`);
+      push("6.","부직포설치","","m²",Math.round(bArea*1.0)||30,"#.280",`부직포: 구조물하부+배면 [${bStructNames}${bDrainNames?"+"+bDrainNames:""}]=${Math.round(bArea)}㎡`);
+      push("6.","비닐깔기","","m²",Math.round(bArea*0.4)||15,"#.281",`비닐: 기초하부 방습 [${bStructNames}]×0.4=${Math.round(bArea*0.4)}㎡`);
     }
     if(allStructQty>0||paveItems.length>0){
-      push("4.","물푸기","","hr",24,"#.282","물푸기: 공사기간 중 지하수 배수 24hr (1일×24시간)");
-      push("4.","교통통제및안전처리","500M미만","일",5,"#.481","교통통제: 공사기간 5일×1식/일 (도로 인접 공사)");
+      push("6.","물푸기","","hr",24,"#.282","물푸기: 공사기간 중 지하수 배수 24hr (1일×24시간)");
+      push("6.","교통통제및안전처리","500M미만","일",5,"#.481","교통통제: 공사기간 5일×1식/일 (도로 인접 공사)");
     }
     etcItems.filter(d=>d.item.match(/낙석/)).forEach(d=>{
-      push("4.","낙석방지망","철망설치(기계식)","m²",d.qty,"#.453",`${d.item}: ${d.qty}㎡`);
+      push("6.","낙석방지망","철망설치(기계식)","m²",d.qty,"#.453",`${d.item}: ${d.qty}㎡`);
     });
     etcItems.filter(d=>!d.item.match(/굴착|사토|토사|잔해|낙석/)).forEach(d=>{
-      push("4.",d.item,"피해현황 직접반영",d.unit,d.qty,"",d.basis||"");
+      push("6.",d.item,"피해현황 직접반영",d.unit,d.qty,"",d.basis||"");
     });
 
     // ── Step 3: 동일 공종(priceId+name) 합산 → 내역서용 items 생성 ──
@@ -672,7 +745,10 @@ ${currentDamage || "(없음)"}
       {kw:"표층아스콘", matName:"아스콘(표층)",    spec:"AP-5, WC-1",   unit:"m²", price:3800,  ratio:1.0, type:"관급"},
       {kw:"보조기층",   matName:"쇄석(보조기층)",  spec:"40mm",         unit:"m³", price:18000, ratio:1.0, type:"사급"},
       // 안전시설 자재
-      {kw:"가드레일",   matName:"가드레일(자재)",  spec:"빔+지주 세트", unit:"m",  price:85000, ratio:1.0, type:"사급"},
+      {kw:"호안블럭",   matName:"호안블록(자재)", spec:"1.0×1.0m 블록",unit:"m²", price:15000, ratio:1.0, type:"사급"},
+  {kw:"돌붙임",     matName:"석재(돌붙임)",   spec:"자연석",       unit:"m²", price:40000, ratio:1.0, type:"관급"},
+  {kw:"전석",       matName:"전석(자재)",     spec:"자연석",       unit:"m²", price:35000, ratio:1.0, type:"관급"},
+  {kw:"가드레일",   matName:"가드레일(자재)",  spec:"빔+지주 세트", unit:"m",  price:85000, ratio:1.0, type:"사급"},
       {kw:"낙석방지망", matName:"낙석방지망(자재)",spec:"철망",         unit:"m²", price:8000,  ratio:1.0, type:"사급"},
       {kw:"낙석방지책", matName:"낙석방지책(자재)",spec:"와이어로프+네트",unit:"경간",price:500000,ratio:1.0,type:"관급"},
     ];
@@ -799,7 +875,7 @@ ${currentDamage || "(없음)"}
             <tbody>
               <TR13 label="순 공 사 비" a={[sunG,sunI,sunK,sunM]} bg="bg-slate-200" tc="text-slate-800"/>
               {[{c:"1.",n:"토공",t:t1},{c:"2.",n:"구조물공",t:t2},{c:"3.",n:"포장공",t:t3},{c:"4.",n:"부대공",t:t4}].map(({c,n,t})=>{const ci=act.filter(i=>i.cat===c);if(!ci.length)return null;return<Fragment key={c}><CR13 code={c} name={n} a={[t.g,t.i,t.k,t.m]}/>{ci.map((item,idx)=><IR13Edit key={item.id} item={item} onUpdate={updField} idx={idx}/>)}</Fragment>})}
-              <CR13 code="5." name="사급자재대" a={[sT,0,0,0]} fill="bg-orange-50"/>{sagub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1"></td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td colSpan={6} className="border"></td></tr>)}
+              <CR13 code="5." name="사급자재대" a={[sT,0,0,0]} fill="bg-orange-50"/>{sagub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1"></td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td><td className="border px-1 py-1 text-right text-xs">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right text-xs">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td></tr>)}
               <CR13 code="6." name="관급자재대" a={[gTot,0,0,0]} fill="bg-red-50"/>{gwangub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1 text-center text-xs">{it.sub}</td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td colSpan={6} className="border"></td></tr>)}
               <tr className="bg-red-50 font-bold"><td colSpan={5} className="border px-3 py-1.5 text-center text-red-700">관급수수료 (1.5%)</td><td className="border"></td><td className="border px-1 py-1.5 text-right text-red-700">{fmt(gF)}</td><td colSpan={6} className="border"></td></tr>
               <TR13 label="총 공 사 비" a={[grand,0,0,0]} bg="bg-slate-800" tc="text-white"/>
