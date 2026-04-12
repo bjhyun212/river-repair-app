@@ -135,12 +135,10 @@ let _nid = 200;
 const nid = () => _nid++;
 
 const INIT_DAMAGE = () => [
-  {id:1,item:"석축 신설 (찰쌓기)",basis:"기존 석축 전면 붕괴 → 찰쌓기 석축 신설\n높이 2.5m × 연장 20.5m = 51㎡",qty:51,unit:"㎡",enabled:true},
-  {id:2,item:"기초 콘크리트 신설",basis:"기초 세굴 → RC 기초 신설 (근입 D=1.0m)\n폭 2.5m × 연장 20.5m × 깊이 1.0m = 51㎥",qty:51,unit:"㎥",enabled:true},
-  {id:3,item:"잡석기초 다짐",basis:"기초 하부 잡석 다짐\n폭 2.5m × 연장 20.5m × T=0.5m = 26㎥",qty:26,unit:"㎥",enabled:true},
-  {id:4,item:"도로 포장 복구",basis:"아스팔트 파손 복구\n폭 2.0m × 연장 20m = 40㎡",qty:40,unit:"㎡",enabled:true},
-  {id:5,item:"사면 녹화 복원",basis:"붕괴 사면 녹화\n높이 3.0m × 연장 15m = 45㎡",qty:45,unit:"㎡",enabled:true},
-  {id:6,item:"토사 굴착 및 사토",basis:"붕괴 잔해 + 터파기 + 사토운반\n총 308㎥",qty:308,unit:"㎥",enabled:true},
+  {id:1,item:"석축찰쌓기",basis:"높이3.0m×연장20m=60㎡",qty:60,unit:"㎡",enabled:true},
+  {id:2,item:"아스콘포장",basis:"폭4.0m×연장20m=80㎡",qty:80,unit:"㎡",enabled:true},
+  {id:3,item:"배수관설치",basis:"φ600mm×연장15m",qty:15,unit:"m",enabled:true},
+  {id:4,item:"사면녹화",basis:"높이3.0m×연장20m=60㎡",qty:60,unit:"㎡",enabled:true},
 ];
 
 /* ★ items에 labor/material/expense 필드 추가 (PRICE_DB에 없는 항목용) */
@@ -191,7 +189,7 @@ const EditTable = memo(function EditTable({items,onToggleAll,onToggle,onUpdate,a
         <td className="border px-1 py-1 text-center text-slate-400">{idx+1}</td>
         <td className="border px-1 py-1 text-center"><input value={d.priceId} onChange={e=>onUpdate(d.id,"priceId",e.target.value)} className="w-full text-center bg-transparent text-blue-600 font-medium text-xs outline-none focus:bg-blue-50 rounded px-1 py-0.5" placeholder="#.번호"/></td>
         <td className="border px-1 py-1 text-center"><select value={d.cat} onChange={e=>onUpdate(d.id,"cat",e.target.value)} className="text-xs bg-transparent outline-none w-full">{CAT_OPTIONS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></td>
-        <td className="border px-1 py-1"><input value={d.name} onChange={e=>onUpdate(d.id,"name",e.target.value)} className="w-full bg-transparent text-xs outline-none focus:bg-blue-50 rounded px-1 py-0.5" placeholder="공종명"/></td>
+        <td className="border px-1 py-1"><input value={d.name} onChange={e=>onUpdate(d.id,"name",e.target.value)} className="w-full bg-transparent text-xs outline-none focus:bg-blue-50 rounded px-1 py-0.5" placeholder="복구공종 (석축찰쌓기, 아스콘포장 등)"/></td>
         <td className="border px-1 py-1"><input value={d.spec} onChange={e=>onUpdate(d.id,"spec",e.target.value)} className="w-full bg-transparent text-xs text-slate-500 outline-none focus:bg-blue-50 rounded px-1 py-0.5" placeholder="규격"/></td>
         <td className="border px-1 py-1 text-center"><input type="number" value={d.qty} step="0.1" onChange={e=>onUpdate(d.id,"qty",e.target.value)} className="w-full text-center bg-transparent text-xs font-medium outline-none focus:bg-blue-50 rounded px-1 py-0.5"/></td>
         <td className="border px-1 py-1 text-center"><select value={d.unit} onChange={e=>onUpdate(d.id,"unit",e.target.value)} className="text-xs bg-transparent outline-none">{UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></td>
@@ -462,7 +460,7 @@ ${currentDamage || "(없음)"}
     const structItems=[],paveItems=[],slopeItems=[],drainItems=[],etcItems=[];
     enabledDmg.forEach(d=>{
       if(d.item.match(/석축|옹벽|RC|역.*T|호안|콘크리트.*벽|기초|구조물/i)) structItems.push(d);
-      else if(d.item.match(/포장|도로|아스팔트/)) paveItems.push(d);
+      else if(d.item.match(/포장|도로|아스팔트|아스콘/)) paveItems.push(d);
       else if(d.item.match(/사면|녹화|법면/)) slopeItems.push(d);
       else if(d.item.match(/측구|배수|수로|산마루|플륨|흄관|관로|관부설/)) drainItems.push(d);
       else etcItems.push(d);
@@ -701,7 +699,7 @@ ${currentDamage || "(없음)"}
                 <p className="text-slate-300 text-xs leading-relaxed">{recoveryPlan.method}</p>
               </div>
               <div>
-                <p className="text-blue-200 font-medium mb-1">복구계획</p>
+                <p className="text-blue-200 font-medium mb-1">피해내용</p>
                 <div className="text-slate-300 text-xs leading-relaxed space-y-0.5">
                   {damage.filter(d=>d.enabled).map((d,i)=><p key={d.id}>{i+1}. {d.item}: {d.qty}{d.unit} ({d.basis||""})</p>)}
                   {damage.filter(d=>d.enabled).length===0&&<p className="text-slate-500">복구설계를 입력하세요</p>}
@@ -716,7 +714,7 @@ ${currentDamage || "(없음)"}
           <section><div className="flex items-center justify-between flex-wrap gap-2"><Hd n="2" t="복구설계"/><div className="flex gap-1"><button onClick={addDamage} className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 font-medium">➕ 항목추가</button><button onClick={delDamageUnchecked} className="text-xs px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 font-medium">🗑️ 선택삭제</button></div></div>
           <div className="mt-2 overflow-x-auto border rounded-lg"><table className="w-full text-sm border-collapse"><thead><tr className="bg-blue-700 text-white"><th className="border border-blue-600 px-2 py-2 w-8"><input type="checkbox" checked={allD} ref={el=>{if(el)el.indeterminate=!allD&&someD}} onChange={toggleAllD} className="w-4 h-4"/></th><th className="border border-blue-600 px-2 py-2 w-10">No</th><th className="border border-blue-600 px-3 py-2" style={{minWidth:150}}>공종 (복구계획)</th><th className="border border-blue-600 px-3 py-2">수량산출근거</th><th className="border border-blue-600 px-2 py-2 w-16">수량</th><th className="border border-blue-600 px-2 py-2 w-14">단위</th></tr></thead>
           <tbody>{damage.map((d,i)=><tr key={d.id} className={!d.enabled?"bg-slate-100 opacity-40 line-through":!d.item?"bg-yellow-50":i%2===0?"bg-white":"bg-slate-50"}><td className="border px-2 py-1.5 text-center"><input type="checkbox" checked={d.enabled} onChange={()=>toggleD(d.id)} className="w-4 h-4"/></td><td className="border px-2 py-1.5 text-center font-medium">{i+1}</td><td className="border px-2 py-1.5"><input value={d.item} onChange={e=>updDamage(d.id,"item",e.target.value)} className="w-full bg-transparent text-sm font-medium text-blue-800 outline-none focus:bg-blue-50 rounded px-1" placeholder="공종명"/></td><td className="border px-2 py-1.5"><input value={d.basis} onChange={e=>updDamage(d.id,"basis",e.target.value)} className="w-full bg-transparent text-xs text-slate-600 outline-none focus:bg-blue-50 rounded px-1" placeholder="산출근거"/></td><td className="border px-1 py-1.5 text-center"><input type="number" value={d.qty} onChange={e=>updDamage(d.id,"qty",e.target.value)} className="w-full text-center bg-transparent text-sm font-bold outline-none focus:bg-blue-50 rounded"/></td><td className="border px-1 py-1.5 text-center"><select value={d.unit} onChange={e=>updDamage(d.id,"unit",e.target.value)} className="text-sm bg-transparent outline-none">{UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></td></tr>)}</tbody></table></div>
-            <div className="mt-3 text-center"><button onClick={handleBuildEstimate} className="px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow">📊 설계내역서 작성 (피해현황 반영)</button></div>
+            <div className="mt-3 text-center"><button onClick={handleBuildEstimate} className="px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow">📊 설계내역서 작성 (복구설계 반영)</button></div>
           </section>
 
           <section><Hd n="💬" t="수정.질문"/>
