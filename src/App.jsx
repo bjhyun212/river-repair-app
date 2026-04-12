@@ -367,8 +367,8 @@ export default function App(){
 
   const act=useMemo(()=>items.filter(i=>i.enabled),[items]);
   const calcCat=useCallback(c=>act.filter(i=>i.cat===c).reduce((s,i)=>{const p=getPrice(i);return{g:s.g+Math.round(i.qty*p.total),i:s.i+Math.round(i.qty*p.labor),k:s.k+Math.round(i.qty*p.material),m:s.m+Math.round(i.qty*p.expense)}},{g:0,i:0,k:0,m:0}),[act]);
-  const t1=calcCat("1."),t2=calcCat("2."),t3=calcCat("3."),t4=calcCat("4.");
-  const sunG=t1.g+t2.g+t3.g+t4.g,sunI=t1.i+t2.i+t3.i+t4.i,sunK=t1.k+t2.k+t3.k+t4.k,sunM=t1.m+t2.m+t3.m+t4.m;
+  const t1=calcCat("1."),t2=calcCat("2."),t3=calcCat("3."),t4=calcCat("4."),t5=calcCat("5."),t6=calcCat("6.");
+  const sunG=t1.g+t2.g+t3.g+t4.g+t5.g+t6.g,sunI=t1.i+t2.i+t3.i+t4.i+t5.i+t6.i,sunK=t1.k+t2.k+t3.k+t4.k+t5.k+t6.k,sunM=t1.m+t2.m+t3.m+t4.m+t5.m+t6.m;
   const sT=sagub.reduce((s,i)=>s+Math.round(i.qty*i.unitPrice),0);
   const gTot=gwangub.reduce((s,i)=>s+Math.round(i.qty*i.unitPrice),0);
   const gF=Math.round(gTot*FEE_RATE),grand=sunG+sT+gTot+gF;
@@ -834,7 +834,9 @@ ${currentDamage || "(없음)"}
               <div>
                 <p className="text-blue-200 font-medium mb-1">피해내용</p>
                 <div className="text-slate-300 text-xs leading-relaxed space-y-0.5">
-                  {damage.filter(d=>d.enabled).map((d,i)=><p key={d.id}>{i+1}. {d.item}: {d.qty}{d.unit} ({d.basis||""})</p>)}
+                  {damage.filter(d=>d.enabled).map((d,i)=>{
+                    const dmg=d.item.match(/석축/)?`석축유실 ${d.qty}${d.unit}`:d.item.match(/옹벽|RC/)?`옹벽붕괴 ${d.qty}${d.unit}`:d.item.match(/포장|아스콘/)?`포장파손 ${d.qty}${d.unit}`:d.item.match(/사면|녹화/)?`사면유실 ${d.qty}${d.unit}`:d.item.match(/배수|흄관|측구|암거/)?`배수시설파손 ${d.qty}${d.unit}`:d.item.match(/호안/)?`호안유실 ${d.qty}${d.unit}`:d.item.match(/노반/)?`노반유실 ${d.qty}${d.unit}`:`${d.item} ${d.qty}${d.unit}`;
+                    return <p key={d.id}>{i+1}. {dmg} ({d.basis||""})</p>})}
                   {damage.filter(d=>d.enabled).length===0&&<p className="text-slate-500">복구설계를 입력하세요</p>}
                 </div>
               </div>
@@ -875,9 +877,9 @@ ${currentDamage || "(없음)"}
             <tr className="bg-blue-600 text-white text-center">{["단가","금액","단가","금액","단가","금액","단가","금액"].map((t,i)=><th key={i} className="border border-blue-500 px-1 py-1">{t}</th>)}</tr></thead>
             <tbody>
               <TR13 label="순 공 사 비" a={[sunG,sunI,sunK,sunM]} bg="bg-slate-200" tc="text-slate-800"/>
-              {[{c:"1.",n:"토공",t:t1},{c:"2.",n:"구조물공",t:t2},{c:"3.",n:"포장공",t:t3},{c:"4.",n:"부대공",t:t4}].map(({c,n,t})=>{const ci=act.filter(i=>i.cat===c);if(!ci.length)return null;return<Fragment key={c}><CR13 code={c} name={n} a={[t.g,t.i,t.k,t.m]}/>{ci.map((item,idx)=><IR13Edit key={item.id} item={item} onUpdate={updField} idx={idx}/>)}</Fragment>})}
-              <CR13 code="5." name="사급자재대" a={[sT,0,0,0]} fill="bg-orange-50"/>{sagub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1"></td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td><td className="border px-1 py-1 text-right text-xs">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right text-xs">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td></tr>)}
-              <CR13 code="6." name="관급자재대" a={[gTot,0,0,0]} fill="bg-red-50"/>{gwangub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1 text-center text-xs">{it.sub}</td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td colSpan={6} className="border"></td></tr>)}
+              {(()=>{const allCats=[{c:"1.",n:"토공",t:t1},{c:"2.",n:"구조물공",t:t2},{c:"3.",n:"배수공",t:t3},{c:"4.",n:"호안공",t:t4},{c:"5.",n:"포장공",t:t5},{c:"6.",n:"부대공",t:t6}];let seq=0;return allCats.map(({c,n,t})=>{const ci=act.filter(i=>i.cat===c);if(!ci.length)return null;seq++;return<Fragment key={c}><CR13 code={`${seq}.`} name={n} a={[t.g,t.i,t.k,t.m]}/>{ci.map((item,idx)=><IR13Edit key={item.id} item={item} onUpdate={updField} idx={idx}/>)}</Fragment>})})()}
+              {/* 사급자재대 */}<CR13 code={`${[t1,t2,t3,t4,t5,t6].filter((_,i)=>act.some(x=>x.cat===["1.","2.","3.","4.","5.","6."][i])).length+1}.`} name="사급자재대" a={[sT,0,0,0]} fill="bg-orange-50"/>{sagub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1"></td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td><td className="border px-1 py-1 text-right text-xs">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right text-xs">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td></tr>)}
+              <CR13 code={`${[t1,t2,t3,t4,t5,t6].filter((_,i)=>act.some(x=>x.cat===["1.","2.","3.","4.","5.","6."][i])).length+2}.`} name="관급자재대" a={[gTot,0,0,0]} fill="bg-red-50"/>{gwangub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1 text-center text-xs">{it.sub}</td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td colSpan={6} className="border"></td></tr>)}
               <tr className="bg-red-50 font-bold"><td colSpan={5} className="border px-3 py-1.5 text-center text-red-700">관급수수료 (1.5%)</td><td className="border"></td><td className="border px-1 py-1.5 text-right text-red-700">{fmt(gF)}</td><td colSpan={6} className="border"></td></tr>
               <TR13 label="총 공 사 비" a={[grand,0,0,0]} bg="bg-slate-800" tc="text-white"/>
             </tbody></table></div></section>
