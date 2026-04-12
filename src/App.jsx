@@ -269,7 +269,7 @@ async function askDesignAI(question, currentDamage) {
         model: "claude-sonnet-4-20250514",
         max_tokens: 2000,
         messages: [{ role: "user", content: `현재 피해현황: ${JSON.stringify(dmgList)}\n\n사용자 요청: ${question}` }],
-        system: `당신은 30년 경력의 토목직 공무원이자 소규모주민숙원사업 설계 전문가입니다.\n이 사업은 단순 하자보수가 아닌 【개량공법에 의한 전면적 개선설계】입니다.\n기존 구조물의 근본적 문제를 해결하는 개량 방향으로 답변하세요.\n\n사용자의 요청이 피해현황 수정/변경 요청인 경우:\n반드시 JSON으로만 응답: {"action":"modify","damage":[{"item":"공종명","basis":"산출근거","qty":숫자,"unit":"단위"}],"message":"수정내용요약"}\n\n설계/공법/기준 질문인 경우:\nJSON으로 응답: {"action":"answer","message":"상세하고 전문적인 답변. 관련 설계기준(KDS 등) 구체적 인용. 실무 관점의 장단점, 적용조건, 시공방법 포함. 최소 300자 이상."}\n\n참고: 하천설계기준(2019), KDS 51 40 15 석축, KDS 14 20 72 옹벽, KDS 11 80 05 토류벽, 자연재해대책법, 2025 충북 일위대가`
+        system: `당신은 30년 경력의 토목직 공무원이자 소규모주민숙원사업 설계 전문가입니다.\n이 사업은 단순 하자보수가 아닌 【개량공법에 의한 전면적 개선설계】입니다.\n기존 구조물의 근본적 문제를 해결하는 개량 방향으로 답변하세요.\n\n사용자의 요청이 피해현황 수정/변경 요청인 경우:\n반드시 JSON으로만 응답: {"action":"modify","damage":[{"item":"복구공종명(석축찰쌓기,아스콘포장 등)","basis":"산출근거(폭×높이×길이=수량)","qty":숫자,"unit":"단위"}],"message":"수정내용요약"}\n\n설계/공법/기준 질문인 경우:\nJSON으로 응답: {"action":"answer","message":"상세하고 전문적인 답변. 관련 설계기준(KDS 등) 구체적 인용. 실무 관점의 장단점, 적용조건, 시공방법 포함. 최소 300자 이상."}\n\n참고: 하천설계기준(2019), KDS 51 40 15 석축, KDS 14 20 72 옹벽, KDS 11 80 05 토류벽, 자연재해대책법, 2025 충북 일위대가`
     });
     return data.content?.map(c => c.type === "text" ? c.text : "").join("") || "";
   } catch (e) { throw e; }
@@ -288,8 +288,8 @@ export default function App(){
   const[view,setView]=useState("analysis");
   const[damage,setDamage]=useState([]);
   const[items,setItems]=useState([]);
-  const[sagub]=useState(INIT_SAGUB);
-  const[gwangub]=useState(INIT_GWANGUB);
+  const[sagub,setSagub]=useState(INIT_SAGUB);
+  const[gwangub,setGwangub]=useState(INIT_GWANGUB);
   const[photoUrl,setPhotoUrl]=useState(null);
   const[photoFile,setPhotoFile]=useState(null);
   const[photoModal,setPhotoModal]=useState(false);
@@ -311,7 +311,7 @@ export default function App(){
     try{
       const base64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=()=>rej(new Error("읽기실패"));r.readAsDataURL(photoFile)});
       const mt=photoFile.type||"image/jpeg";
-      const resp_data=await callAI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:`당신은 30년 경력의 토목직 공무원이자 하천 수해복구 설계 전문가입니다.\n사진을 분석하여 반드시 아래 JSON 형식으로만 응답하세요. JSON 외의 텍스트는 절대 포함하지 마세요.\n\n{"recovery":{"method":"복구방침(피해상황+복구방향 구체적 서술)","steps":["1.토공:...","2.구조물공:...","3.포장공:...","4.부대공:...","5.기타:..."]},"damage":[{"item":"피해공종명","basis":"수량산출근거(폭×높이×길이=수량)","qty":숫자,"unit":"㎡/㎥/m"}],"designItems":[{"cat":"1./2./3./4.","name":"공종명","spec":"규격","unit":"m²등","qty":숫자,"priceId":"#.번호"}]}\n\n분석원칙 (소규모주민숙원사업 = 개량설계):\n- 이 사업은 단순 하자보수가 아닌 【개량공법에 의한 전면적 개선설계】입니다\n- 사진의 표면적 증상(균열,파손)뿐 아니라 근본 원인(구조적 결함,설계미비,배수불량,기초부실 등)을 분석하세요\n- 기존 구조물의 문제점을 완전히 해결하는 개선방향을 제시하세요\n- 예: 단순 균열보수(X) → 구조물 전면 철거 후 개량 공법으로 재시공(O)\n- 예: 석축 부분보수(X) → RC옹벽 또는 보강토옹벽으로 공법 변경(O)\n- 예: 포장 패칭(X) → 기층부터 전면 재포장(O)\n- 구조적 취약점→무조건 개선복구, 기초근입D≥1.0m\n- 배수체계 개선(유공관,맹암거,측구 등) 반드시 포함 검토\n- 안전시설(가드레일,낙석방지망 등) 추가 설치 검토\n- 피해물량은 사진에서 추정가능한 치수로 산출하되, 개량설계 관점에서 충분한 물량 확보\n- priceId: #.22표토제거,#.28흙깍기,#.57구조물터파기,#.68뒤채움,#.70되메우기,#.77기초지정잡석,#.87사면녹화,#.127사토운반,#.155석축쌓기,#.193레미콘타설,#.204합판거푸집,#.216철근가공,#.276콘크리트양생,#.280부직포,#.281비닐,#.282물푸기,#.326아스팔트덧씌우기,#.481교통통제\n- 사진에 해당하지 않는 공종은 포함하지 마세요`,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mt,data:base64}},{type:"text",text:"이 현장 사진을 분석하여 피해현황과 복구 설계물량을 JSON으로 응답해주세요."}]}]});
+      const resp_data=await callAI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:`당신은 30년 경력의 토목직 공무원이자 하천 수해복구 설계 전문가입니다.\n사진을 분석하여 반드시 아래 JSON 형식으로만 응답하세요. JSON 외의 텍스트는 절대 포함하지 마세요.\n\n{"recovery":{"method":"복구방침(피해상황+복구방향 구체적 서술)","steps":["1.토공:...","2.구조물공:...","3.포장공:...","4.부대공:...","5.기타:..."]},"damage":[{"item":"복구공종명(석축찰쌓기,아스콘포장,배수관설치,사면녹화 등)","basis":"수량산출근거(폭×높이×길이=수량)","qty":숫자,"unit":"㎡/㎥/m"}],"designItems":[{"cat":"1./2./3./4.","name":"공종명","spec":"규격","unit":"m²등","qty":숫자,"priceId":"#.번호"}]}\n\n분석원칙 (소규모주민숙원사업 = 개량설계):\n- 이 사업은 단순 하자보수가 아닌 【개량공법에 의한 전면적 개선설계】입니다\n- 사진의 표면적 증상(균열,파손)뿐 아니라 근본 원인(구조적 결함,설계미비,배수불량,기초부실 등)을 분석하세요\n- 기존 구조물의 문제점을 완전히 해결하는 개선방향을 제시하세요\n- 예: 단순 균열보수(X) → 구조물 전면 철거 후 개량 공법으로 재시공(O)\n- 예: 석축 부분보수(X) → RC옹벽 또는 보강토옹벽으로 공법 변경(O)\n- 예: 포장 패칭(X) → 기층부터 전면 재포장(O)\n- 구조적 취약점→무조건 개선복구, 기초근입D≥1.0m\n- 배수체계 개선(유공관,맹암거,측구 등) 반드시 포함 검토\n- 안전시설(가드레일,낙석방지망 등) 추가 설치 검토\n- 피해물량은 사진에서 추정가능한 치수로 산출하되, 개량설계 관점에서 충분한 물량 확보\n- priceId: #.22표토제거,#.28흙깍기,#.57구조물터파기,#.68뒤채움,#.70되메우기,#.77기초지정잡석,#.87사면녹화,#.127사토운반,#.155석축쌓기,#.193레미콘타설,#.204합판거푸집,#.216철근가공,#.276콘크리트양생,#.280부직포,#.281비닐,#.282물푸기,#.326아스팔트덧씌우기,#.481교통통제\n- 사진에 해당하지 않는 공종은 포함하지 마세요`,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mt,data:base64}},{type:"text",text:"이 현장 사진을 분석하여 복구설계(복구공종명+물량)를 JSON으로 응답해주세요. item은 피해내용이 아닌 복구공종명(석축찰쌓기, 아스콘포장, 배수관설치, RC옹벽신설, 사면녹화 등)으로 작성하세요."}]}]});
       const text=resp_data.content?.map(c=>c.type==="text"?c.text:"").join("")||"";
       const jsonMatch=text.match(/\{[\s\S]*\}/);
       if(!jsonMatch)throw new Error("JSON파싱실패");
@@ -386,7 +386,7 @@ export default function App(){
 
 사용자가 피해현황 수정을 요청하면 반드시 아래 JSON을 응답 맨 앞에 포함하고, 그 뒤에 설명을 추가하세요:
 <!--DAMAGE_UPDATE-->
-{"damage":[{"item":"공종명","basis":"산출근거","qty":숫자,"unit":"단위"}]}
+{"damage":[{"item":"복구공종명(석축찰쌓기,아스콘포장 등)","basis":"산출근거(폭×높이×길이=수량)","qty":숫자,"unit":"단위"}]}
 <!--/DAMAGE_UPDATE-->
 
 사용자가 질문만 하면 JSON 없이 전문적으로 답변하세요.
@@ -651,7 +651,63 @@ ${currentDamage || "(없음)"}
 
     _nid=id+200;
     setItems(newItems);
-    alert(`피해현황 ${enabledDmg.length}개 항목 → 설계내역서 ${newItems.length}개 공종 (합산)\n\n수량산출서에서 소분류별 상세 근거를 확인하세요.`);
+
+    // ══════════════════════════════════════════════════════════
+    // 사급/관급 자재 동적 재계산 — 공종별 자재 분리 체계
+    // ══════════════════════════════════════════════════════════
+    // [자재매핑 테이블] 공종키워드 → 자재명, 규격, 단위, 단가, 수량비율, 구분(사급/관급)
+    const MAT_MAP=[
+      // 구조물 자재
+      {kw:"거푸집",     matName:"합판거푸집(자재)",spec:"합판,유로폼",    unit:"m²", price:12000, ratio:1.0, type:"사급"},
+      {kw:"부직포",     matName:"부직포(자재)",    spec:"부직포 원단",   unit:"m²", price:1500,  ratio:1.0, type:"사급"},
+      {kw:"비닐",       matName:"비닐(자재)",      spec:"PE필름 0.1mm", unit:"m²", price:500,   ratio:1.0, type:"사급"},
+      {kw:"레미콘타설", matName:"레미콘",          spec:"25-210-12",    unit:"m³", price:75000, ratio:1.0, type:"관급"},
+      {kw:"철근",       matName:"이형철근(SD400)", spec:"HD13",         unit:"ton",price:950000,ratio:1.0, type:"관급"},
+      {kw:"석축",       matName:"석재",            spec:"자연석",       unit:"m²", price:45000, ratio:1.0, type:"관급"},
+      {kw:"기초지정",   matName:"잡석",            spec:"25-40mm",      unit:"m³", price:22000, ratio:1.0, type:"관급"},
+      // 배수 자재
+      {kw:"흄관",       matName:"흄관(자재)",      spec:"진동전압관",   unit:"m",  price:0,     ratio:1.0, type:"사급", diaPrice:true},
+      // 포장 자재
+      {kw:"기층아스콘", matName:"아스콘(기층)",    spec:"AP-5, WC-2",   unit:"m²", price:3500,  ratio:1.0, type:"관급"},
+      {kw:"표층아스콘", matName:"아스콘(표층)",    spec:"AP-5, WC-1",   unit:"m²", price:3800,  ratio:1.0, type:"관급"},
+      {kw:"보조기층",   matName:"쇄석(보조기층)",  spec:"40mm",         unit:"m³", price:18000, ratio:1.0, type:"사급"},
+      // 안전시설 자재
+      {kw:"가드레일",   matName:"가드레일(자재)",  spec:"빔+지주 세트", unit:"m",  price:85000, ratio:1.0, type:"사급"},
+      {kw:"낙석방지망", matName:"낙석방지망(자재)",spec:"철망",         unit:"m²", price:8000,  ratio:1.0, type:"사급"},
+      {kw:"낙석방지책", matName:"낙석방지책(자재)",spec:"와이어로프+네트",unit:"경간",price:500000,ratio:1.0,type:"관급"},
+    ];
+
+    const newSagub=[], newGwangub=[];
+    let sid=101, gid=201;
+
+    MAT_MAP.forEach(mat=>{
+      const matched=newItems.filter(i=>i.name?.includes(mat.kw));
+      if(!matched.length) return;
+      const totalQty=matched.reduce((s,i)=>s+i.qty,0);
+      if(totalQty<=0) return;
+
+      // 흄관은 관경별 단가 적용
+      if(mat.diaPrice){
+        matched.forEach(h=>{
+          const dia=h.name?.match(/(\d+)/)?Number(h.name.match(/(\d+)/)[1]):600;
+          const uPrice=dia>=1000?180000:dia>=800?130000:dia>=600?85000:dia>=450?55000:35000;
+          const entry={id:0,name:`${mat.matName} φ${dia}mm`,spec:`${mat.spec} D=${dia}mm`,unit:mat.unit,qty:h.qty,unitPrice:uPrice,source:"관 제조업체"};
+          if(mat.type==="사급"){entry.id=sid++;newSagub.push(entry)}
+          else{entry.id=gid++;entry.sub="6.4";newGwangub.push(entry)}
+        });
+        return;
+      }
+
+      const qty=Math.round(totalQty*mat.ratio*10)/10;
+      const entry={id:0,name:mat.matName,spec:mat.spec,unit:mat.unit,qty,unitPrice:mat.price,source:"2025 물가정보"};
+      if(mat.type==="사급"){entry.id=sid++;newSagub.push(entry)}
+      else{entry.id=gid++;entry.sub=mat.kw.includes("레미콘")?"6.1":mat.kw.includes("철근")?"6.2":"6.3";newGwangub.push(entry)}
+    });
+
+    setSagub(newSagub.length>0?newSagub:INIT_SAGUB());
+    setGwangub(newGwangub.length>0?newGwangub:INIT_GWANGUB());
+
+    alert(`복구설계 ${enabledDmg.length}개 항목 → 설계내역서 ${newItems.length}개 공종\n사급자재 ${newSagub.length}개, 관급자재 ${newGwangub.length}개 자동 반영`);
     setView("estimate"); window.scrollTo(0,0);
   },[damage]);
   const handleSave=useCallback(async()=>{const json=JSON.stringify({v:"8.3",damage,items,chatLog,projName,projLoc,at:new Date().toISOString()},null,2);const blob=new Blob([json],{type:"application/json"});if(window.showSaveFilePicker){try{const handle=await window.showSaveFilePicker({suggestedName:`소규모주민숙원_${new Date().toISOString().slice(0,10)}.json`,types:[{description:"JSON 파일",accept:{"application/json":[".json"]}}]});const writable=await handle.createWritable();await writable.write(blob);await writable.close();alert("저장 완료!")}catch(e){if(e.name!=="AbortError")alert("저장 오류: "+e.message)}}else{const fn=window.prompt("파일명:",`소규모주민숙원_${new Date().toISOString().slice(0,10)}`);if(!fn)return;const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${fn}.json`;a.click();URL.revokeObjectURL(a.href)}},[damage,items,chatLog,projName,projLoc]);
