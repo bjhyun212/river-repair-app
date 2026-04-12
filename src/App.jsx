@@ -181,9 +181,9 @@ const EditTable = memo(function EditTable({items,onToggleAll,onToggle,onUpdate,a
       <th className="border border-slate-600 px-1 py-1.5 w-10">No</th>
       <th className="border border-slate-600 px-1 py-1.5 w-16">단가ID</th>
       <th className="border border-slate-600 px-1 py-1.5 w-20">공종</th>
-      <th className="border border-slate-600 px-2 py-1.5" style={{minWidth:120}}>품명</th>
-      <th className="border border-slate-600 px-2 py-1.5" style={{minWidth:140}}>규격</th>
-      <th className="border border-slate-600 px-2 py-1.5" style={{minWidth:180}}>산출근거</th>
+      <th className="border border-slate-600 px-2 py-1.5" style={{minWidth:100}}>품명</th>
+      <th className="border border-slate-600 px-2 py-1.5" style={{minWidth:100}}>규격</th>
+      <th className="border border-slate-600 px-2 py-1.5" style={{minWidth:280}}>산출근거</th>
       <th className="border border-slate-600 px-1 py-1.5 w-14">수량</th>
       <th className="border border-slate-600 px-1 py-1.5 w-14">단위</th>
       <th className="border border-slate-600 px-1 py-1.5 w-20">합계단가</th>
@@ -197,7 +197,7 @@ const EditTable = memo(function EditTable({items,onToggleAll,onToggle,onUpdate,a
         <td className="border px-1 py-1 text-center"><select value={d.cat} onChange={e=>onUpdate(d.id,"cat",e.target.value)} className="text-xs bg-transparent outline-none w-full">{CAT_OPTIONS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></td>
         <td className="border px-1 py-1"><input value={d.name} onChange={e=>onUpdate(d.id,"name",e.target.value)} className="w-full bg-transparent text-xs outline-none focus:bg-blue-50 rounded px-1 py-0.5" placeholder="복구공종"/></td>
         <td className="border px-1 py-1"><input value={d.spec} onChange={e=>onUpdate(d.id,"spec",e.target.value)} className="w-full bg-transparent text-xs text-slate-500 outline-none focus:bg-blue-50 rounded px-1 py-0.5" placeholder="규격"/></td>
-        <td className="border px-1 py-1"><input value={d.basis||""} onChange={e=>onUpdate(d.id,"basis",e.target.value)} className="w-full bg-transparent text-xs text-slate-500 outline-none focus:bg-blue-50 rounded px-1 py-0.5" placeholder="산출근거" title={d.basis||""}/></td>
+        <td className="border px-1 py-1"><textarea value={d.basis||""} onChange={e=>onUpdate(d.id,"basis",e.target.value)} rows={2} className="w-full bg-transparent text-xs text-slate-600 outline-none focus:bg-blue-50 rounded px-1 py-0.5 resize-none leading-tight" placeholder="산출근거" style={{minHeight:32}}/></td>
         <td className="border px-1 py-1 text-center"><input type="number" value={d.qty} step="0.1" onChange={e=>onUpdate(d.id,"qty",e.target.value)} className="w-full text-center bg-transparent text-xs font-medium outline-none focus:bg-blue-50 rounded px-1 py-0.5"/></td>
         <td className="border px-1 py-1 text-center"><select value={d.unit} onChange={e=>onUpdate(d.id,"unit",e.target.value)} className="text-xs bg-transparent outline-none">{UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></td>
         <td className="border px-1 py-1 text-right text-xs">{fmt(p.total)}</td>
@@ -244,6 +244,7 @@ const IR13Edit = memo(function IR13Edit({item, onUpdate, idx}) {
 });
 
 /* ============================================================ Excel (동일) */
+async function saveXL(X,wb,defaultName){if(window.showSaveFilePicker){try{const handle=await window.showSaveFilePicker({suggestedName:defaultName,types:[{description:"Excel 파일",accept:{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"]}}]});const wbout=X.write(wb,{bookType:"xlsx",type:"array"});const writable=await handle.createWritable();await writable.write(new Blob([wbout],{type:"application/octet-stream"}));await writable.close();return}catch(e){if(e.name==="AbortError")return}}X.writeFile(wb,defaultName)}
 const loadXLSX=()=>new Promise((res,rej)=>{if(window.XLSX){res(window.XLSX);return}const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js";s.onload=()=>window.XLSX?res(window.XLSX):rej(new Error("f"));s.onerror=()=>{const s2=document.createElement("script");s2.src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";s2.onload=()=>res(window.XLSX);s2.onerror=()=>rej(new Error("CDN"));document.head.appendChild(s2)};document.head.appendChild(s)});
 const HS={font:{bold:true,color:{rgb:"FFFFFF"},sz:10},fill:{fgColor:{rgb:"4472C4"}},border:{top:{style:"thin"},bottom:{style:"thin"},left:{style:"thin"},right:{style:"thin"}},alignment:{horizontal:"center",vertical:"center",wrapText:true}};
 const CST=rgb=>({font:{bold:true,sz:10},fill:{fgColor:{rgb}},border:{top:{style:"thin"},bottom:{style:"thin"},left:{style:"thin"},right:{style:"thin"}},alignment:{horizontal:"center",vertical:"center"}});
