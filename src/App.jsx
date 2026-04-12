@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useMemo, Fragment, memo } from "react";
 
 /* ============================================================
-   소규모주민숙원사업 종합검토보고서 v8.3
+   소규모주민숙원사업 설계자동화 VER2.0
    v8.2 + 신규공종 노무비/재료비/경비 단가 직접입력 → 자동계산
    ============================================================ */
 
@@ -53,14 +53,29 @@ const PRICE_DB = {
   "#.453":{name:"낙석방지망",spec:"철망설치(기계식)",unit:"m²",labor:6115,material:11800,expense:1510,total:19425},
   "#.451":{name:"낙석방지책",spec:"표준구간(3.0×3.0)",unit:"경간",labor:257962,material:505960,expense:6158,total:770080},
   "#.460":{name:"안전시설목",spec:"",unit:"ea",labor:122778,material:344733,expense:1196,total:468707},
+  "#.100":{name:"진동전압관부설",spec:"D=300mm,고무링접합",unit:"m",labor:28432,material:3680,expense:4805,total:36917},
+  "#.101":{name:"진동전압관부설",spec:"D=450mm,고무링접합",unit:"m",labor:47454,material:6143,expense:8020,total:61617},
+  "#.102":{name:"진동전압관부설",spec:"D=600mm,고무링접합",unit:"m",labor:65688,material:8503,expense:11102,total:85293},
+  "#.103":{name:"진동전압관부설",spec:"D=800mm,고무링접합",unit:"m",labor:85479,material:11065,expense:14448,total:110992},
+  "#.105":{name:"진동전압관부설",spec:"D=1000mm,고무링접합",unit:"m",labor:116786,material:13438,expense:20774,total:150998},
   "#.306":{name:"보조기층포설및다짐",spec:"인력,소규모",unit:"m³",labor:11408,material:1410,expense:1577,total:14395},
   "#.330":{name:"아스팔트절삭",spec:"소규모포장",unit:"m²",labor:1009,material:626,expense:619,total:2254},
   "#.331":{name:"아스팔트덧씌우기",spec:"소규모포장",unit:"m²",labor:2245,material:328,expense:489,total:3062},
 };
 
 /* ★ 단가 조회: PRICE_DB 있으면 DB, 없으면 item 자체 값 사용 */
+// 공종명 → 단가ID 자동 매핑 (PRICE_DB에 없는 경우)
+const AUTO_PRICE_MAP={"가드레일":"#.445","낙석방지망":"#.453","낙석방지책":"#.451","안전시설목":"#.460","아스팔트절삭":"#.330","덧씌우기":"#.331","보조기층":"#.306","흄관":"#.102","플륨관":"#.92"};
+function autoMapPrice(item){
+  if(item.priceId&&PRICE_DB[item.priceId])return item.priceId;
+  for(const[kw,pid]of Object.entries(AUTO_PRICE_MAP)){
+    if(item.name?.includes(kw)&&PRICE_DB[pid])return pid;
+  }
+  return item.priceId||"";
+}
 function getPrice(item) {
-  const db = PRICE_DB[item.priceId];
+  const mapped=autoMapPrice(item);
+  const db = PRICE_DB[mapped];
   if (db) return db;
   if ((item.labor||0)+(item.material||0)+(item.expense||0)>0)
     return { labor: item.labor||0, material: item.material||0, expense: item.expense||0, total: (item.labor||0)+(item.material||0)+(item.expense||0) };
@@ -68,7 +83,8 @@ function getPrice(item) {
 }
 // 단가 적용 우선순위: ①2025 충북 일위대가(PRICE_DB) → ②유사단가 적용 → ③가격정보(물가자료) → ④직접입력
 function getPriceBasis(item) {
-  if (PRICE_DB[item.priceId]) return `2025 충북 일위대가 ${item.priceId}`;
+  const mapped=autoMapPrice(item);
+  if (PRICE_DB[mapped]) return `2025 충북 일위대가 ${mapped}`;
   if ((item.labor||0)+(item.material||0)+(item.expense||0)>0) return "유사단가 또는 가격정보 적용 (직접입력)";
   return "단가 미등록 — 유사단가>가격정보>물가정보 순 적용 필요";
 }
@@ -407,7 +423,7 @@ ${currentDamage || "(없음)"}
       if(d.item.match(/석축|옹벽|RC|역.*T|호안|콘크리트.*벽|기초|구조물/i)) structItems.push(d);
       else if(d.item.match(/포장|도로|아스팔트/)) paveItems.push(d);
       else if(d.item.match(/사면|녹화|법면/)) slopeItems.push(d);
-      else if(d.item.match(/측구|배수|수로|산마루|플륨|흄관|관로/)) drainItems.push(d);
+      else if(d.item.match(/측구|배수|수로|산마루|플륨|흄관|관로|관부설/)) drainItems.push(d);
       else etcItems.push(d);
     });
     const allStructQty=structItems.reduce((s,d)=>s+d.qty,0);
@@ -492,9 +508,20 @@ ${currentDamage || "(없음)"}
       }
     });
 
-    // 배수공 (측구 등) — 상세 치수 산출
+    // 배수공 (측구/흄관 등) — 상세 치수 산출
     drainItems.forEach(d=>{
       const L=d.qty, label=d.item;
+      // 흄관/관로인 경우 별도 처리
+      if(d.item.match(/흄관|관부설|관로|플륨/)){
+        const dia=d.basis?.match(/(\d+)\s*mm/)?Number(d.basis.match(/(\d+)\s*mm/)[1]):600;
+        const pId=dia>=1000?"#.105":dia>=800?"#.103":dia>=600?"#.102":dia>=450?"#.101":"#.100";
+        push("2.","구조물터파기","육상토사,기계100%","m³",Math.round(L*1.2*1.0)||10,"#.57",`${label}: 폭1.2m×깊이1.0m×길이${L}m=${Math.round(L*1.2)}㎥`);
+        push("2.","기초지정","잡석","m³",+(L*0.6*0.15).toFixed(1),"#.77",`${label}: 폭0.6m×두께0.15m×길이${L}m=${(L*0.6*0.15).toFixed(1)}㎥`);
+        push("2.",`흄관부설(φ${dia}mm)`,"고무링접합","m",L,pId,`${label}: φ${dia}mm×길이${L}m`);
+        push("1.","뒤채움 및 다짐","소형장비","m³",Math.round(L*0.8)||5,"#.68",`${label}: 관 주변 뒤채움 폭0.8m×길이${L}m`);
+        push("1.","되메우기 및 다짐","소형장비","m³",Math.round(L*0.4)||3,"#.70",`${label}: 잔여 되메우기`);
+        return;  // 아래 측구 로직 건너뛰기
+      }
       // 산마루측구 단면: 폭0.4m×깊이0.4m, 벽두께0.1m
       const W=0.4, H=0.4, T=0.1;
       const digV=Math.round((W+0.4)*0.6*L*10)/10;  // 터파기: (측구폭+여유)×깊이×길이
@@ -515,48 +542,46 @@ ${currentDamage || "(없음)"}
 
     // 3. 포장공 — 기층/표층 세부 공종 반영
     paveItems.forEach(d=>{
-      const A=d.qty, label=d.item;
+      const A=d.qty, label=d.item, ob=d.basis||"";
       if(d.item.match(/기층/)){
-        // 아스팔트 기층포장
-        const japV=+(A*0.1).toFixed(1);  // 보조기층 잡석 T=0.1m
-        push("3.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}: ${A}㎡×T0.1m=${japV}㎥`);
-        push("3.","프라임코팅","RS(C)-3,기계","m²",A,"#.310",`${label}: 포장면적=${A}㎡`);
-        push("3.","기층아스콘포설및다짐","소형장비(5-7cm)","m²",A,"#.314",`${label}: 기층 T=5~7cm, 면적=${A}㎡`);
+        const japV=+(A*0.1).toFixed(1);
+        push("3.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}(${ob}): 보조기층 면적${A}㎡×T=0.1m=${japV}㎥`);
+        push("3.","프라임코팅","RS(C)-3,기계","m²",A,"#.310",`${label}(${ob}): 기층하부 프라임코팅 면적=${A}㎡`);
+        push("3.","기층아스콘포설및다짐","소형장비(5-7cm)","m²",A,"#.314",`${label}(${ob}): 기층아스콘 T=5~7cm, 면적=${A}㎡`);
       }
       else if(d.item.match(/표층/)){
-        // 아스팔트 표층포장
-        push("3.","택코팅","RS(C)-4,기계","m²",A,"#.312",`${label}: 포장면적=${A}㎡`);
-        push("3.","표층아스콘포설및다짐","소형장비","m²",A,"#.321",`${label}: 표층 T=5cm, 면적=${A}㎡`);
+        push("3.","택코팅","RS(C)-4,기계","m²",A,"#.312",`${label}(${ob}): 표층하부 택코팅 면적=${A}㎡`);
+        push("3.","표층아스콘포설및다짐","소형장비","m²",A,"#.321",`${label}(${ob}): 표층아스콘 T=5cm, 면적=${A}㎡`);
       }
       else if(d.item.match(/절삭|덧씌/)){
-        // 절삭후 덧씌우기
-        push("3.","절삭후아스팔트덧씌우기","B-Type(1회절삭,1회포장)","m²",A,"#.326",`${label}: 절삭+덧씌우기 면적=${A}㎡ (${d.basis||""})`);
+        push("3.","절삭후아스팔트덧씌우기","B-Type(1회절삭,1회포장)","m²",A,"#.326",`${label}(${ob}): 절삭+덧씌우기 면적=${A}㎡`);
       }
       else {
-        // 일반 도로포장 → 기층+표층 전면 재포장
         const japV=+(A*0.15).toFixed(1);
-        push("3.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}: 보조기층 ${A}㎡×T0.15m=${japV}㎥`);
-        push("3.","프라임코팅","RS(C)-3,기계","m²",A,"#.310",`${label}: 기층 하부 프라임코팅=${A}㎡`);
-        push("3.","기층아스콘포설및다짐","소형장비(5-7cm)","m²",A,"#.314",`${label}: 기층 T=5~7cm, 면적=${A}㎡`);
-        push("3.","택코팅","RS(C)-4,기계","m²",A,"#.312",`${label}: 표층 하부 택코팅=${A}㎡`);
-        push("3.","표층아스콘포설및다짐","소형장비","m²",A,"#.321",`${label}: 표층 T=5cm, 면적=${A}㎡`);
+        push("3.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}(${ob}): 보조기층 면적${A}㎡×T=0.15m=${japV}㎥`);
+        push("3.","프라임코팅","RS(C)-3,기계","m²",A,"#.310",`${label}(${ob}): 기층하부 프라임코팅=${A}㎡`);
+        push("3.","기층아스콘포설및다짐","소형장비(5-7cm)","m²",A,"#.314",`${label}(${ob}): 기층아스콘 T=5~7cm=${A}㎡`);
+        push("3.","택코팅","RS(C)-4,기계","m²",A,"#.312",`${label}(${ob}): 표층하부 택코팅=${A}㎡`);
+        push("3.","표층아스콘포설및다짐","소형장비","m²",A,"#.321",`${label}(${ob}): 표층아스콘 T=5cm=${A}㎡`);
       }
     });
 
     // 사면
     slopeItems.forEach(d=>{
-      push("1.","절토사면 녹화","T=10㎝","m²",d.qty,"#.87",`${d.item}: 녹화면적=${d.qty}㎡ (${d.basis||"피해현황 참조"})`);
+      push("1.","절토사면 녹화","T=10㎝","m²",d.qty,"#.87",`${d.item}(${d.basis||""}): 사면녹화 T=10cm, 면적=${d.qty}㎡`);
     });
 
-    // 4. 부대공
+    // 4. 부대공 — 소분류별 근거 상세
+    const bStructNames=structItems.map(d=>`${d.item}${d.qty}${d.unit}`).join("+");
+    const bDrainNames=drainItems.map(d=>`${d.item}${d.qty}${d.unit}`).join("+");
     const bArea=allStructQty+drainItems.reduce((s,d)=>s+d.qty,0);
     if(bArea>0){
-      push("4.","부직포설치","","m²",Math.round(bArea*1.0)||30,"#.280",`부직포: 구조물 하부+배면 면적=${Math.round(bArea)}㎡`);
-      push("4.","비닐깔기","","m²",Math.round(bArea*0.4)||15,"#.281",`비닐: 기초 하부 방습용 면적=${Math.round(bArea*0.4)}㎡`);
+      push("4.","부직포설치","","m²",Math.round(bArea*1.0)||30,"#.280",`부직포: 구조물하부+배면 [${bStructNames}${bDrainNames?"+"+bDrainNames:""}]=${Math.round(bArea)}㎡`);
+      push("4.","비닐깔기","","m²",Math.round(bArea*0.4)||15,"#.281",`비닐: 기초하부 방습 [${bStructNames}]×0.4=${Math.round(bArea*0.4)}㎡`);
     }
     if(allStructQty>0||paveItems.length>0){
-      push("4.","물푸기","","hr",24,"#.282","물푸기: 공사기간 중 지하수 배수=24hr");
-      push("4.","교통통제및안전처리","500M미만","일",5,"#.481","교통통제: 공사기간 5일×1식/일");
+      push("4.","물푸기","","hr",24,"#.282","물푸기: 공사기간 중 지하수 배수 24hr (1일×24시간)");
+      push("4.","교통통제및안전처리","500M미만","일",5,"#.481","교통통제: 공사기간 5일×1식/일 (도로 인접 공사)");
     }
     etcItems.filter(d=>d.item.match(/낙석/)).forEach(d=>{
       push("4.","낙석방지망","철망설치(기계식)","m²",d.qty,"#.453",`${d.item}: ${d.qty}㎡`);
@@ -596,7 +621,7 @@ ${currentDamage || "(없음)"}
 
   return(
     <div className="min-h-screen bg-white" style={{fontFamily:"'Pretendard','Noto Sans KR',sans-serif"}}>
-      <div className="bg-slate-800 text-white py-5 px-4"><div className="max-w-7xl mx-auto"><p className="text-blue-300 text-xs tracking-widest mb-1">소규모주민숙원사업</p><h1 className="text-2xl font-bold">종합검토보고서 <span className="text-sm font-normal text-slate-400">v8.3</span></h1></div></div>
+      <div className="bg-slate-800 text-white py-5 px-4"><div className="max-w-7xl mx-auto"><p className="text-blue-300 text-xs tracking-widest mb-1">소규모주민숙원사업</p><h1 className="text-2xl font-bold">설계자동화 <span className="text-sm font-normal text-slate-400">VER2.0</span></h1></div></div>
       <div className="sticky top-0 z-30 bg-white border-b shadow-sm"><div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-2">{[["analysis","🔍 AI 분석"],["estimate","📊 설계내역서"]].map(([k,l])=><button key={k} onClick={()=>{setView(k);window.scrollTo(0,0)}} className={`px-5 py-2.5 text-sm rounded-lg font-bold ${view===k?"bg-blue-600 text-white shadow-md":"bg-slate-100 text-slate-700 hover:bg-slate-200"}`}>{l}</button>)}</div>
         <div className="flex gap-1 flex-wrap">
@@ -635,10 +660,13 @@ ${currentDamage || "(없음)"}
                 <p className="text-slate-300 text-xs leading-relaxed">{recoveryPlan.method}</p>
               </div>
               <div>
-                <p className="text-blue-200 font-medium mb-1">피해물량</p>
+                <p className="text-blue-200 font-medium mb-1">복구계획</p>
                 <div className="text-slate-300 text-xs leading-relaxed space-y-0.5">
-                  {damage.filter(d=>d.enabled).map((d,i)=><p key={d.id}>{i+1}. {d.item}: {d.qty}{d.unit}</p>)}
-                  {damage.filter(d=>d.enabled).length===0&&<p className="text-slate-500">복구설계 물량을 입력하세요</p>}
+                  {damage.filter(d=>d.enabled).map((d,i)=>{
+                    const rn=d.item.replace(/붕괴|파손|유실|매몰|노출/g,"").trim();
+                    const plan=d.item.match(/석축/)?`석축찰쌓기 ${d.qty}${d.unit}`:d.item.match(/옹벽/)?`RC옹벽 신설 ${d.qty}${d.unit}`:d.item.match(/포장|도로/)?`아스팔트 전면재포장 ${d.qty}${d.unit}`:d.item.match(/측구|배수|산마루/)?`배수공 신설 ${d.qty}${d.unit}`:d.item.match(/흄관|관로/)?`흄관부설 ${d.qty}${d.unit}`:d.item.match(/사면|녹화/)?`사면녹화공 ${d.qty}${d.unit}`:d.item.match(/낙석/)?`낙석방지책 설치 ${d.qty}${d.unit}`:d.item.match(/노반/)?`노반복구 ${d.qty}${d.unit}`:d.item.match(/가드레일/)?`가드레일 설치 ${d.qty}${d.unit}`:`${d.item} ${d.qty}${d.unit}`;
+                    return <p key={d.id}>{i+1}. {plan}</p>})}
+                  {damage.filter(d=>d.enabled).length===0&&<p className="text-slate-500">복구설계를 입력하세요</p>}
                 </div>
               </div>
             </div>
@@ -648,7 +676,7 @@ ${currentDamage || "(없음)"}
           <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3"><h4 className="font-bold text-red-700 text-sm mb-2">관급자재 요약</h4><div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"><div><span className="text-slate-500 text-xs">품목</span><p className="font-semibold">레미콘,철근,석재,잡석</p></div><div><span className="text-slate-500 text-xs">관급자재비</span><p className="font-bold text-red-600">{fmt(gTot)}원</p></div><div><span className="text-slate-500 text-xs">수수료율</span><p>1.5%</p></div><div><span className="text-slate-500 text-xs">관급수수료</span><p className="font-bold text-red-600">{fmt(gF)}원</p></div></div></div>
 
           <section><div className="flex items-center justify-between flex-wrap gap-2"><Hd n="2" t="복구설계"/><div className="flex gap-1"><button onClick={addDamage} className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 font-medium">➕ 항목추가</button><button onClick={delDamageUnchecked} className="text-xs px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 font-medium">🗑️ 선택삭제</button></div></div>
-          <div className="mt-2 overflow-x-auto border rounded-lg"><table className="w-full text-sm border-collapse"><thead><tr className="bg-blue-700 text-white"><th className="border border-blue-600 px-2 py-2 w-8"><input type="checkbox" checked={allD} ref={el=>{if(el)el.indeterminate=!allD&&someD}} onChange={toggleAllD} className="w-4 h-4"/></th><th className="border border-blue-600 px-2 py-2 w-10">No</th><th className="border border-blue-600 px-3 py-2" style={{minWidth:150}}>공종 (개선복구)</th><th className="border border-blue-600 px-3 py-2">수량산출근거</th><th className="border border-blue-600 px-2 py-2 w-16">수량</th><th className="border border-blue-600 px-2 py-2 w-14">단위</th></tr></thead>
+          <div className="mt-2 overflow-x-auto border rounded-lg"><table className="w-full text-sm border-collapse"><thead><tr className="bg-blue-700 text-white"><th className="border border-blue-600 px-2 py-2 w-8"><input type="checkbox" checked={allD} ref={el=>{if(el)el.indeterminate=!allD&&someD}} onChange={toggleAllD} className="w-4 h-4"/></th><th className="border border-blue-600 px-2 py-2 w-10">No</th><th className="border border-blue-600 px-3 py-2" style={{minWidth:150}}>공종 (복구계획)</th><th className="border border-blue-600 px-3 py-2">수량산출근거</th><th className="border border-blue-600 px-2 py-2 w-16">수량</th><th className="border border-blue-600 px-2 py-2 w-14">단위</th></tr></thead>
           <tbody>{damage.map((d,i)=><tr key={d.id} className={!d.enabled?"bg-slate-100 opacity-40 line-through":!d.item?"bg-yellow-50":i%2===0?"bg-white":"bg-slate-50"}><td className="border px-2 py-1.5 text-center"><input type="checkbox" checked={d.enabled} onChange={()=>toggleD(d.id)} className="w-4 h-4"/></td><td className="border px-2 py-1.5 text-center font-medium">{i+1}</td><td className="border px-2 py-1.5"><input value={d.item} onChange={e=>updDamage(d.id,"item",e.target.value)} className="w-full bg-transparent text-sm font-medium text-blue-800 outline-none focus:bg-blue-50 rounded px-1" placeholder="공종명"/></td><td className="border px-2 py-1.5"><input value={d.basis} onChange={e=>updDamage(d.id,"basis",e.target.value)} className="w-full bg-transparent text-xs text-slate-600 outline-none focus:bg-blue-50 rounded px-1" placeholder="산출근거"/></td><td className="border px-1 py-1.5 text-center"><input type="number" value={d.qty} onChange={e=>updDamage(d.id,"qty",e.target.value)} className="w-full text-center bg-transparent text-sm font-bold outline-none focus:bg-blue-50 rounded"/></td><td className="border px-1 py-1.5 text-center"><select value={d.unit} onChange={e=>updDamage(d.id,"unit",e.target.value)} className="text-sm bg-transparent outline-none">{UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></td></tr>)}</tbody></table></div>
             <div className="mt-3 text-center"><button onClick={handleBuildEstimate} className="px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow">📊 설계내역서 작성 (피해현황 반영)</button></div>
           </section>
