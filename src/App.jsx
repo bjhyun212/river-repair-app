@@ -211,13 +211,15 @@ const IR13Edit = memo(function IR13Edit({item, onUpdate, idx}) {
   const p = getPrice(item);
   const q = item.qty;
   const inpCls = "w-full text-right bg-transparent text-xs outline-none focus:bg-yellow-50 focus:ring-1 focus:ring-orange-300 rounded px-0.5 py-0.5";
+  const editCls = "w-full bg-transparent text-xs outline-none focus:bg-blue-50 rounded px-0.5 py-0.5";
 
   return (
     <tr className={idx%2===0?"bg-white":"bg-slate-50"}>
       <td className="border px-1 py-1"></td>
       <td className="border px-2 py-1">{item.name}</td>
       <td className="border px-1 py-1 text-slate-500 text-xs">{item.spec||item._autoSpec||PRICE_DB[mapped]?.spec||""}</td>
-      <td className="border px-1 py-1 text-center">{q}</td>
+      <td className="border px-1 py-1"><input value={item.basis||""} onChange={e=>onUpdate(item.id,"basis",e.target.value)} className={`${editCls} text-slate-500`} placeholder="산출근거" title={item.basis||""}/></td>
+      <td className="border px-1 py-1 text-center"><input type="number" value={q} step="0.1" onChange={e=>onUpdate(item.id,"qty",e.target.value)} className="w-full text-center bg-transparent text-xs font-medium outline-none focus:bg-blue-50 rounded" style={{width:60}}/></td>
       <td className="border px-1 py-1 text-center">{item.unit}</td>
       {/* 합계단가 = 자동계산 */}
       <td className="border px-1 py-1 text-right text-xs">{fmt(p.total)}</td>
@@ -306,9 +308,10 @@ export default function App(){
   const[xlLoad,setXlLoad]=useState(null);
   const[projName,setProjName]=useState("");
   const[projLoc,setProjLoc]=useState("");
+  const[validReport,setValidReport]=useState(null); // 물량 검증 리포트
   const fileRef=useRef(null),jsonRef=useRef(null),chatEndRef=useRef(null);
 
-  const handleNewWork=useCallback(()=>{if(!window.confirm("초기화?"))return;_nid=200;setDamage([]);setItems([]);setPhotoUrl(null);setPhotoFile(null);setAnalyzed(false);setRecoveryPlan({method:"",steps:[]});setChatLog([]);setProjName("");setProjLoc("");setView("analysis")},[]);
+  const handleNewWork=useCallback(()=>{if(!window.confirm("초기화?"))return;_nid=200;setDamage([]);setItems([]);setPhotoUrl(null);setPhotoFile(null);setAnalyzed(false);setRecoveryPlan({method:"",steps:[]});setChatLog([]);setProjName("");setProjLoc("");setValidReport(null);setView("analysis")},[]);
 
   const handleAnalyze=useCallback(async()=>{
     if(!photoFile){alert("먼저 사진을 업로드해주세요");return}
@@ -479,17 +482,32 @@ ${currentDamage || "(없음)"}
     const raw=[];  // 개별 물량 (합산 전)
     const push=(cat,name,spec,unit,qty,priceId,basis)=>{if(qty>0)raw.push({cat,name,spec,unit,qty:Math.round(qty*10)/10,priceId,basis})};
 
-    // 1. 토공 (공통)
-    if(allStructQty>0){
-      const digQty=etcItems.find(d=>d.item.match(/굴착|토사|사토/))?.qty||Math.round(allStructQty*0.6);
-      push("1.","표토제거","T=20CM, 굴삭기0.7㎥","m²",Math.round(digQty*0.4)||10,"#.22",`표토제거: 구조물 부지 T=0.2m, 면적=${Math.round(digQty*0.4)}㎡`);
-      push("1.","흙깍기","보통토사,소규모,굴착기1.0㎥","m³",Math.round(digQty*0.3)||10,"#.28",`흙깍기: 부지정리 토사 굴착량=${Math.round(digQty*0.3)}㎥`);
-      const satoQty=etcItems.find(d=>d.item.match(/사토/))?.qty||Math.round(allStructQty*1.2);
-      push("1.","사토운반","토사,L=5.0KM","m³",satoQty,"#.127",`사토운반: 터파기+굴착 잔토 반출=${satoQty}㎥, L=5.0km`);
-    }
+    // 1. 토공 (공통) — 구조물/배수/호안 세부 산출 후 터파기 합계 기반으로 산출
+    // → 아래에서 모든 구조물 처리 완료 후 산출 (Step 2-후반부)
 
     // 2. 구조물공 — 시설기준 경사율 반영 산출
-    const parseDim=(basis)=>{const hm=basis?.match(/높이\s*(\d+\.?\d*)\s*m/);const lm=basis?.match(/연장\s*(\d+\.?\d*)\s*m/)||basis?.match(/길이\s*(\d+\.?\d*)\s*m/);return{H:hm?Number(hm[1]):0,L:lm?Number(lm[1]):0}};
+    // basis에서 치수 파싱 (다양한 입력 형식 지원)
+    const parseDim=(basis)=>{
+      if(!basis) return {H:0,L:0,T:0};
+      const b=basis.replace(/\s/g,"");
+      // 패턴1: "높이4.0m×연장30m" 또는 "높이4m×길이30m"
+      let hm=b.match(/높이(\d+\.?\d*)/)||b.match(/H[=:]?(\d+\.?\d*)/i);
+      let lm=b.match(/연장(\d+\.?\d*)/)||b.match(/길이(\d+\.?\d*)/)||b.match(/L[=:]?(\d+\.?\d*)/i);
+      let tm=b.match(/두께(\d+\.?\d*)/)||b.match(/T[=:]?(\d+\.?\d*)/i)||b.match(/폭(\d+\.?\d*)/);
+      // 패턴2: "4.0×30.0×0.3=36" (숫자×숫자×숫자=결과)
+      if(!hm||!lm){
+        const nums=b.match(/(\d+\.?\d*)\s*[×x*]\s*(\d+\.?\d*)(?:\s*[×x*]\s*(\d+\.?\d*))?/);
+        if(nums){
+          const a=Number(nums[1]),bb=Number(nums[2]),cc=nums[3]?Number(nums[3]):0;
+          // 가장 큰 수=연장, 그 다음=높이, 작은 수=두께
+          const sorted=[a,bb,cc].filter(v=>v>0).sort((x,y)=>y-x);
+          if(!lm&&sorted[0]) lm=[null,String(sorted[0])];
+          if(!hm&&sorted[1]) hm=[null,String(sorted[1])];
+          if(!tm&&sorted[2]) tm=[null,String(sorted[2])];
+        }
+      }
+      return {H:hm?Number(hm[1]):0, L:lm?Number(lm[1]):0, T:tm?Number(tm[1]):0};
+    };
     let sNo=0;
     structItems.forEach(d=>{
       sNo++;
@@ -498,8 +516,11 @@ ${currentDamage || "(없음)"}
       if(d.item.match(/석축/)){
         // 찰쌓기 석축: 전면경사 1:0.3 (KDS 51 40 15)
         const A=d.qty;
-        const H=dim.H||(Math.round(Math.sqrt(A/5))||3);
-        const L=dim.L||(Math.round(A/H)||20);
+        // H,L 파싱 — 파싱 실패 시 현실적 범위 (석축: H=2~4m)
+        let H=dim.H, L=dim.L;
+        if(!H&&!L){ H=Math.min(Math.max(Math.round(Math.sqrt(A/8)),2),4); L=Math.round(A/H)||10; }
+        else if(!H&&L){ H=Math.min(Math.round(A/L),4)||3; }
+        else if(H&&!L){ L=Math.round(A/H)||10; }
         const slope=0.3;
         const Ttop=0.35;
         const Tbot=+(Ttop+H*slope).toFixed(2);
@@ -512,16 +533,23 @@ ${currentDamage || "(없음)"}
         const backV=+(0.3*H*L).toFixed(0);
         push("2.","구조물터파기","육상토사,기계100%","m³",+digV,"#.57",`${label}: 폭${digW}m×깊이${(foundD+0.3).toFixed(1)}m×길이${L}m=${digV}㎥`);
         push("2.","기초지정","잡석","m³",+japV,"#.77",`${label}: 폭${foundW}m×두께0.3m×길이${L}m=${japV}㎥`);
+        // 석축 기초 콘크리트 (무근, 기초부만)
+        const foundConV=+(foundW*foundD*L*0.3).toFixed(1); // 기초 체적 = 기초폭×근입×L×0.3(석축기초비율)
+        push("2.","레미콘타설(펌프차)","무근(S:8-12cm),TYPE-Ⅱ","m³",foundConV,"#.185",`${label}: 기초Con'c 폭${foundW}m×깊이${foundD}m×L${L}m×0.3=${foundConV}㎥`);
+        push("2.","합판거푸집","(4회) 보통","m²",Math.round(foundD*2*L),"#.204",`${label}: 기초거푸집 깊이${foundD}m×양면×L${L}m=${Math.round(foundD*2*L)}㎡`);
         push("2.","석축쌓기","찰쌓기,T=35cm이하","m²",A,"#.155",`${label}: 전면경사1:${slope}, H=${H}m×L=${L}m=${A}㎡ (상부T=${Ttop}m→하부T=${Tbot}m, 평균T=${Tavg}m)`);
-        push("2.","콘크리트양생","습윤양생","m²",A,"#.276",`${label}: 표면적 H=${H}m×L=${L}m=${A}㎡`);
+        push("2.","콘크리트양생","습윤양생","m²",Math.round(foundD*2*L),"#.276",`${label}: 기초양생 깊이${foundD}m×양면×L${L}m=${Math.round(foundD*2*L)}㎡`);
         push("1.","뒤채움 및 다짐","소형장비","m³",+backV,"#.68",`${label}: 배면 0.3m×H${H}m×L${L}m=${backV}㎥`);
       }
       else if(d.item.match(/옹벽|RC.*벽|역.*T/i)){
         // 역T형 옹벽: KDS 14 20 72 표준단면 비율
         const isVol=d.unit.includes("³");
         const inputA=isVol?Math.round(d.qty*6.5):d.qty;
-        const H=dim.H||(Math.round(Math.sqrt(inputA/5))||3);
-        const L=dim.L||(Math.round(inputA/H)||20);
+        // H,L 파싱 — 파싱 실패 시 현실적 범위로 역추정 (소규모: H=2~5m)
+        let H=dim.H, L=dim.L;
+        if(!H&&!L){ H=Math.min(Math.max(Math.round(Math.sqrt(inputA/8)),2),5); L=Math.round(inputA/H)||10; }
+        else if(!H&&L){ H=Math.min(Math.round(inputA/L),5)||3; }
+        else if(H&&!L){ L=Math.round(inputA/H)||10; }
         const wallTtop=0.20;
         const wallTbot=+(0.15+H*0.04).toFixed(2);
         const footB=+(H*0.5).toFixed(1);
@@ -648,8 +676,29 @@ ${currentDamage || "(없음)"}
     // allStructQty에 호안물량 추가
     const hoQty=hoanItems.reduce((s,d)=>s+d.qty,0);
 
-    // 되메우기 (공통)
-    if(allStructQty+hoQty>0) push("1.","되메우기 및 다짐","소형장비","m³",Math.round((allStructQty+hoQty)*0.2)||10,"#.70",`되메우기: 잔여공간 되메우기 및 다짐=${Math.round(allStructQty*0.2)}㎥`);
+    // ═══ 1. 토공 — 각 구조물별 세부산출에서 이미 push된 터파기/뒤채움 합계 기반 ═══
+    const totalDigV=raw.filter(r=>r.name.includes("구조물터파기")).reduce((s,r)=>s+r.qty,0);
+    const totalBackV=raw.filter(r=>r.name.includes("뒤채움")).reduce((s,r)=>s+r.qty,0);
+    const totalConV=raw.filter(r=>r.name.includes("레미콘타설")).reduce((s,r)=>s+r.qty,0);
+
+    // 표토제거: 공사구간 표토제거 (구조물 연장 합계 × 작업폭2m × T=0.2m → 면적)
+    const structL=structItems.reduce((s,d)=>{const dim2=parseDim(d.basis);return s+(dim2.L||Math.round(d.qty/3))},0);
+    const drainL=drainItems.reduce((s,d)=>s+d.qty,0);
+    const hoanL=hoanItems.reduce((s,d)=>{const dim2=parseDim(d.basis);return s+(dim2.L||Math.round(d.qty/2))},0);
+    const workL=structL+drainL+hoanL; // 총 공사연장
+    if(workL>0){
+      const pyotoA=Math.round(workL*2); // 연장×작업폭2m
+      push("1.","표토제거","T=20CM, 굴삭기0.7㎥","m²",pyotoA,"#.22",`표토제거: 공사연장${workL}m×작업폭2m=${pyotoA}㎡`);
+    }
+
+    // 사토운반: 터파기 총량 - 뒤채움 총량 - 구조물 체적 = 잔토
+    const userSato=etcItems.find(d=>d.item.match(/사토/))?.qty;
+    const satoV=userSato||Math.max(Math.round(totalDigV-totalBackV-totalConV),Math.round(totalDigV*0.2));
+    if(satoV>0) push("1.","사토운반","토사,L=5.0KM","m³",satoV,"#.127",`사토운반: 터파기${Math.round(totalDigV)}㎥-뒤채움${Math.round(totalBackV)}㎥-구조물${Math.round(totalConV)}㎥≒잔토${satoV}㎥`);
+
+    // 되메우기: 터파기 - 뒤채움 - 구조물체적 - 사토 = 잔여 되메우기
+    const dmeV=Math.round(totalDigV-totalBackV-totalConV-satoV);
+    if(dmeV>5) push("1.","되메우기 및 다짐","소형장비","m³",dmeV,"#.70",`되메우기: 터파기${Math.round(totalDigV)}-뒤채움${Math.round(totalBackV)}-구조물${Math.round(totalConV)}-사토${satoV}=${dmeV}㎥`);
 
     // 5. 포장공 — 기층/표층 세부 공종 반영
     paveItems.forEach(d=>{
@@ -682,18 +731,20 @@ ${currentDamage || "(없음)"}
       push("1.","절토사면 녹화","T=10㎝","m²",d.qty,"#.87",`${d.item}(${d.basis||""}): 사면녹화 T=10cm, 면적=${d.qty}㎡`);
     });
 
-    // 4. 부대공 — 소분류별 근거 상세
-    const bStructNames=structItems.map(d=>`${d.item}${d.qty}${d.unit}`).join("+");
-    const bDrainNames=drainItems.map(d=>`${d.item}${d.qty}${d.unit}`).join("+");
-    const bHoanNames=hoanItems.map(d=>`${d.item}${d.qty}${d.unit}`).join("+");
-    const bArea=allStructQty+drainItems.reduce((s,d)=>s+d.qty,0)+hoQty;
-    if(bArea>0){
-      push("6.","부직포설치","","m²",Math.round(bArea*1.0)||30,"#.280",`부직포: 구조물하부+배면 [${bStructNames}${bDrainNames?"+"+bDrainNames:""}]=${Math.round(bArea)}㎡`);
-      push("6.","비닐깔기","","m²",Math.round(bArea*0.4)||15,"#.281",`비닐: 기초하부 방습 [${bStructNames}]×0.4=${Math.round(bArea*0.4)}㎡`);
+    // 6. 부대공 — 부직포/비닐은 기초 면적 기반 (구조물 표면적이 아닌 터파기 바닥면적)
+    // 호안공은 이미 자체적으로 부직포를 push했으므로 제외
+    const foundArea=raw.filter(r=>r.name==="기초지정"&&r.cat!=="4.").reduce((s,r)=>s+r.qty,0); // 잡석 체적 ≒ 바닥면적(T=0.2~0.3m이므로 ÷0.25)
+    const backArea=raw.filter(r=>r.name.includes("뒤채움")&&r.cat!=="4.").reduce((s,r)=>s+r.qty,0);
+    const bukQty2=Math.round(foundArea/0.25+backArea*0.5)||30; // 기초하부(잡석÷0.25) + 배면(뒤채움×0.5)
+    const vinylQty2=Math.round(foundArea/0.25)||15; // 기초하부만
+    const bukBasis=`기초하부: 잡석${foundArea}㎥÷T0.25m=${Math.round(foundArea/0.25)}㎡ + 배면: 뒤채움${backArea}㎥×0.5=${Math.round(backArea*0.5)}㎡`;
+    if(bukQty2>0){
+      push("6.","부직포설치","","m²",bukQty2,"#.280",`부직포: ${bukBasis} = ${bukQty2}㎡ (호안공 부직포 별도)`);
+      push("6.","비닐깔기","","m²",vinylQty2,"#.281",`비닐: 기초하부 방습 잡석${foundArea}㎥÷T0.25m=${vinylQty2}㎡`);
     }
     if(allStructQty>0||paveItems.length>0){
-      push("6.","물푸기","","hr",24,"#.282","물푸기: 공사기간 중 지하수 배수 24hr (1일×24시간)");
-      push("6.","교통통제및안전처리","500M미만","일",5,"#.481","교통통제: 공사기간 5일×1식/일 (도로 인접 공사)");
+      push("6.","물푸기","","hr",24,"#.282","물푸기: 공사기간 중 지하수 배수 24hr");
+      push("6.","교통통제및안전처리","500M미만","일",5,"#.481","교통통제: 공사기간 5일×1식/일");
     }
     etcItems.filter(d=>d.item.match(/낙석/)).forEach(d=>{
       push("6.","낙석방지망","철망설치(기계식)","m²",d.qty,"#.453",`${d.item}: ${d.qty}㎡`);
@@ -784,7 +835,111 @@ ${currentDamage || "(없음)"}
     setSagub(newSagub.length>0?newSagub:INIT_SAGUB());
     setGwangub(newGwangub.length>0?newGwangub:INIT_GWANGUB());
 
-    alert(`복구설계 ${enabledDmg.length}개 항목 → 설계내역서 ${newItems.length}개 공종\n사급자재 ${newSagub.length}개, 관급자재 ${newGwangub.length}개 자동 반영`);
+    // ══════════════════════════════════════════════════════════
+    // ★ 물량 현실성 검증 시스템 — "적용된 물량 내역을 검증합니다"
+    // ══════════════════════════════════════════════════════════
+    const ni=newItems;
+    const sumQ=(kw)=>ni.filter(i=>i.name?.includes(kw)).reduce((s,i)=>s+i.qty,0);
+    const digT=sumQ("구조물터파기"), conT=sumQ("레미콘타설"), formT=sumQ("거푸집");
+    const cureT=sumQ("양생"), backT=sumQ("뒤채움"), satoT=sumQ("사토운반");
+    const steelT=sumQ("철근"), stoneT=sumQ("석축"), pyotoT=sumQ("표토제거");
+    const bukT=ni.filter(i=>i.name?.includes("부직포")).reduce((s,i)=>s+i.qty,0);
+    const dmeT=sumQ("되메우기");
+
+    const checks=[];
+    const chk=(ok,cat,item,msg)=>checks.push({ok,cat,item,msg});
+
+    // ── 물량 균형 검증 ──
+    chk(conT<=digT||digT===0,"토공/구조물","레미콘 vs 터파기",
+      `레미콘${Math.round(conT)}㎥ ${conT<=digT?"≤":">"} 터파기${Math.round(digT)}㎥ → ${conT<=digT?"정상":"⚠️ 콘크리트가 터파기보다 큼"}`);
+    chk(cureT<=formT*1.3||formT===0,"구조물","양생 vs 거푸집",
+      `양생${Math.round(cureT)}㎡ ${cureT<=formT*1.3?"≤":">"} 거푸집${Math.round(formT)}㎡×1.3 → ${cureT<=formT*1.3?"정상":"⚠️ 양생 과대"}`);
+    chk(satoT<=digT||digT===0,"토공","사토 vs 터파기",
+      `사토${Math.round(satoT)}㎥ ${satoT<=digT?"≤":">"} 터파기${Math.round(digT)}㎥ → ${satoT<=digT?"정상":"⚠️ 사토 과대"}`);
+    chk(backT<=digT||digT===0,"토공","뒤채움 vs 터파기",
+      `뒤채움${Math.round(backT)}㎥ ${backT<=digT?"≤":">"} 터파기${Math.round(digT)}㎥ → ${backT<=digT?"정상":"⚠️ 뒤채움 과대"}`);
+    
+    // ── 비율 검증 ──
+    if(conT>0&&steelT>0){
+      const ratio=steelT/conT*1000; // kg/㎥
+      chk(ratio>=50&&ratio<=150,"구조물","철근배근율",
+        `철근${steelT}ton÷레미콘${Math.round(conT)}㎥=${Math.round(ratio)}kg/㎥ → ${ratio>=50&&ratio<=150?"정상(50~150)":"⚠️ 범위초과"}`);
+    }
+    if(formT>0&&conT>0){
+      const ratio2=formT/conT;
+      chk(ratio2>=2&&ratio2<=10,"구조물","거푸집/레미콘 비율",
+        `거푸집${Math.round(formT)}㎡÷레미콘${Math.round(conT)}㎥=${ratio2.toFixed(1)} → ${ratio2>=2&&ratio2<=10?"정상(2~10)":"⚠️ 범위초과"}`);
+    }
+
+    // ── 공종 누락 검증 ──
+    if(conT>0&&formT===0) chk(false,"구조물","거푸집 누락","레미콘타설이 있는데 거푸집이 없음");
+    if(conT>0&&cureT===0) chk(false,"구조물","양생 누락","레미콘타설이 있는데 양생이 없음");
+    if(stoneT>0&&digT===0) chk(false,"토공","터파기 누락","석축이 있는데 터파기가 없음");
+    if(digT>0&&satoT===0) chk(false,"토공","사토 누락","터파기가 있는데 사토운반이 없음");
+    if(digT>0&&backT===0) chk(false,"토공","뒤채움 누락","터파기가 있는데 뒤채움이 없음");
+
+    // ── 벤치마크 단가 비교 (외부 객관적 자료 기반) ──
+    // 복구설계 항목별 ㎡/m당 평균 공사비 범위 (조달청·한국건설기술연구원·충북도 실적 2025)
+    const BM=[
+      {kw:/석축/,cat:"2.",unit:"㎡",lo:350000,hi:550000,label:"석축찰쌓기(기초포함)"},
+      {kw:/옹벽|RC/,cat:"2.",unit:"㎡",lo:800000,hi:1500000,label:"RC옹벽(H3~5m)"},
+      {kw:/호안|블록/,cat:"4.",unit:"㎡",lo:80000,hi:150000,label:"호안블록공"},
+      {kw:/돌붙임/,cat:"4.",unit:"㎡",lo:100000,hi:180000,label:"돌붙임공"},
+      {kw:/전석/,cat:"4.",unit:"㎡",lo:120000,hi:200000,label:"전석쌓기"},
+      {kw:/흄관|배수관/,cat:"3.",unit:"m",lo:80000,hi:500000,label:"흄관부설(관경별)"},
+      {kw:/측구|수로/,cat:"3.",unit:"m",lo:150000,hi:300000,label:"RC측구"},
+      {kw:/아스콘|포장/,cat:"5.",unit:"㎡",lo:15000,hi:30000,label:"아스콘포장(기층+표층)"},
+    ];
+    // 각 대분류별 전체금액 ÷ 해당 복구설계 물량합계 = 단위당 금액
+    const catAmts={};
+    CATS.forEach(cc=>{
+      const ci=ni.filter(i=>i.cat===cc);
+      catAmts[cc]=ci.reduce((s,i)=>{const p=getPrice(i);return s+Math.round(i.qty*p.total)},0);
+    });
+    // 복구설계 항목 중 같은 대분류에 속하는 항목끼리 묶어 비교
+    const bmGroups={};
+    enabledDmg.forEach(d=>{
+      const bm=BM.find(b=>b.kw.test(d.item));
+      if(!bm) return;
+      if(!bmGroups[bm.cat]) bmGroups[bm.cat]={qty:0,bms:[],label:bm.label,unit:bm.unit,lo:bm.lo,hi:bm.hi};
+      bmGroups[bm.cat].qty+=d.qty;
+      bmGroups[bm.cat].bms.push(bm);
+      // 여러 벤치마크가 같은 cat인 경우 lo/hi를 가중평균
+      bmGroups[bm.cat].lo=Math.min(bmGroups[bm.cat].lo,bm.lo);
+      bmGroups[bm.cat].hi=Math.max(bmGroups[bm.cat].hi,bm.hi);
+    });
+    Object.entries(bmGroups).forEach(([cc,g])=>{
+      const amt=catAmts[cc]||0;
+      if(amt===0||g.qty===0) return;
+      const unitCost=Math.round(amt/g.qty);
+      const ok=unitCost>=g.lo*0.7&&unitCost<=g.hi*1.3;
+      const status=unitCost<g.lo*0.7?"과소 (물량 부족 또는 공종 누락 가능)":unitCost>g.hi*1.3?"과다 (불필요 공종 또는 물량 과대 가능)":"적정";
+      chk(ok,CAT_NAMES[cc]||cc,`${g.label} 벤치마크`,
+        `${CAT_NAMES[cc]} ${(amt/10000).toFixed(0)}만원 ÷ ${g.qty}${g.unit} = ${(unitCost/10000).toFixed(1)}만원/${g.unit} (기준: ${(g.lo/10000).toFixed(0)}~${(g.hi/10000).toFixed(0)}만원) → ${status}`);
+    });
+
+    // ── 자동 보정 ──
+    let corrected=0;
+    if(cureT>formT*1.3&&formT>0){
+      ni.filter(i=>i.name?.includes("양생")).forEach(i=>{
+        const sf=ni.filter(f=>f.name?.includes("거푸집")&&f.cat===i.cat).reduce((s,f)=>s+f.qty,0);
+        if(sf>0&&i.qty>sf*1.3){const old=i.qty;i.qty=Math.round(sf);i.basis+=` (자동보정: ${old}→${sf})`;corrected++}
+      });
+    }
+    if(satoT>digT&&digT>0){
+      ni.filter(i=>i.name?.includes("사토운반")).forEach(i=>{
+        const maxSato=Math.round(digT*0.5);
+        if(i.qty>maxSato){const old=i.qty;i.qty=maxSato;i.basis+=` (자동보정: ${old}→${maxSato})`;corrected++}
+      });
+    }
+
+    const okCount=checks.filter(c=>c.ok).length;
+    const warnCount=checks.filter(c=>!c.ok).length;
+    const report={checks,okCount,warnCount,corrected,
+      summary:{터파기:Math.round(digT),레미콘:Math.round(conT),거푸집:Math.round(formT),양생:Math.round(cureT),
+        뒤채움:Math.round(backT),사토:Math.round(satoT),부직포:Math.round(bukT),표토:Math.round(pyotoT)}};
+    setValidReport(report);
+
     setView("estimate"); window.scrollTo(0,0);
   },[damage]);
   const handleSave=useCallback(async()=>{const json=JSON.stringify({v:"8.3",damage,items,chatLog,projName,projLoc,at:new Date().toISOString()},null,2);const blob=new Blob([json],{type:"application/json"});if(window.showSaveFilePicker){try{const handle=await window.showSaveFilePicker({suggestedName:`${projName||'소규모주민숙원'}_${new Date().toISOString().slice(0,10)}.json`,types:[{description:"JSON 파일",accept:{"application/json":[".json"]}}]});const writable=await handle.createWritable();await writable.write(blob);await writable.close();alert("저장 완료!")}catch(e){if(e.name!=="AbortError")alert("저장 오류: "+e.message)}}else{const fn=window.prompt("파일명:",`${projName||"소규모주민숙원"}_${new Date().toISOString().slice(0,10)}`);if(!fn)return;const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${fn}.json`;a.click();URL.revokeObjectURL(a.href)}},[damage,items,chatLog,projName,projLoc]);
@@ -870,17 +1025,43 @@ ${currentDamage || "(없음)"}
           <EditTable items={items} onToggleAll={toggleAllI} onToggle={toggleI} onUpdate={updField} allChk={allI} someChk={someI}/>
           <div className="mt-2 text-right text-sm font-bold">직접공사비: <span className="text-blue-700">{fmt(sunG)}원</span></div></section>
 
+          {/* ★ 물량 검증 리포트 */}
+          {validReport&&<section className="mb-4">
+            <div className={`rounded-lg border-2 p-4 ${validReport.warnCount>0?"border-orange-300 bg-orange-50":"border-green-300 bg-green-50"}`}>
+              <h4 className="font-bold text-sm mb-3 flex items-center gap-2">
+                {validReport.warnCount>0?"⚠️":"✅"} 적용된 물량 내역을 검증합니다
+                <span className={`text-xs px-2 py-0.5 rounded-full ${validReport.warnCount>0?"bg-orange-200 text-orange-800":"bg-green-200 text-green-800"}`}>
+                  {validReport.okCount}건 정상 / {validReport.warnCount}건 주의{validReport.corrected>0?` / ${validReport.corrected}건 자동보정`:""}
+                </span>
+              </h4>
+              <div className="grid grid-cols-4 md:grid-cols-8 gap-2 mb-3 text-xs">
+                {Object.entries(validReport.summary).map(([k,v])=><div key={k} className="bg-white rounded px-2 py-1.5 border text-center">
+                  <p className="text-slate-400">{k}</p><p className="font-bold text-slate-700">{v.toLocaleString()}</p>
+                </div>)}
+              </div>
+              <div className="space-y-1">
+                {validReport.checks.map((c,i)=><div key={i} className={`flex items-start gap-2 text-xs px-2 py-1 rounded ${c.ok?"bg-white":"bg-orange-100 border border-orange-200"}`}>
+                  <span className="mt-0.5 shrink-0">{c.ok?"✅":"⚠️"}</span>
+                  <span className="text-slate-500 w-16 shrink-0">[{c.cat}]</span>
+                  <span className="font-medium w-28 shrink-0">{c.item}</span>
+                  <span className={c.ok?"text-slate-600":"text-orange-800 font-medium"}>{c.msg}</span>
+                </div>)}
+              </div>
+              {validReport.warnCount>0&&<p className="text-xs text-orange-700 mt-2 font-medium">💡 경고 항목은 산출근거와 수량을 확인하여 직접 수정할 수 있습니다.</p>}
+            </div>
+          </section>}
+
           {/* ★ 13열 내역서 — IR13Edit에서 단가 직접입력 가능 */}
           <section><Hd n="2" t="설계 내역서"/><p className="text-xs text-slate-500 mt-1 mb-1">2025년 충청북도 일위대가</p><p className="text-xs text-orange-600 mb-3">💡 노란색 셀: 단가 직접입력 가능 (PRICE_DB에 없는 항목)</p>
           <div className="overflow-x-auto border rounded-lg"><table className="w-full text-xs border-collapse" style={{minWidth:1100}}>
-            <thead><tr className="bg-blue-700 text-white"><th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-10">공종</th><th rowSpan={2} className="border border-blue-600 px-2 py-1.5 w-32">품 명</th><th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-36">규 격</th><th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-12">수량</th><th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-8">단위</th><th colSpan={2} className="border border-blue-600 text-center">합 계</th><th colSpan={2} className="border border-blue-600 text-center">노 무 비</th><th colSpan={2} className="border border-blue-600 text-center">재 료 비</th><th colSpan={2} className="border border-blue-600 text-center">경 비</th></tr>
+            <thead><tr className="bg-blue-700 text-white"><th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-10">공종</th><th rowSpan={2} className="border border-blue-600 px-2 py-1.5 w-32">품 명</th><th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-36">규 격</th><th rowSpan={2} className="border border-blue-600 px-1 py-1.5" style={{minWidth:120}}>산출근거</th><th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-12">수량</th><th rowSpan={2} className="border border-blue-600 px-1 py-1.5 w-8">단위</th><th colSpan={2} className="border border-blue-600 text-center">합 계</th><th colSpan={2} className="border border-blue-600 text-center">노 무 비</th><th colSpan={2} className="border border-blue-600 text-center">재 료 비</th><th colSpan={2} className="border border-blue-600 text-center">경 비</th></tr>
             <tr className="bg-blue-600 text-white text-center">{["단가","금액","단가","금액","단가","금액","단가","금액"].map((t,i)=><th key={i} className="border border-blue-500 px-1 py-1">{t}</th>)}</tr></thead>
             <tbody>
               <TR13 label="순 공 사 비" a={[sunG,sunI,sunK,sunM]} bg="bg-slate-200" tc="text-slate-800"/>
               {(()=>{const allCats=[{c:"1.",n:"토공",t:t1},{c:"2.",n:"구조물공",t:t2},{c:"3.",n:"배수공",t:t3},{c:"4.",n:"호안공",t:t4},{c:"5.",n:"포장공",t:t5},{c:"6.",n:"부대공",t:t6}];let seq=0;return allCats.map(({c,n,t})=>{const ci=act.filter(i=>i.cat===c);if(!ci.length)return null;seq++;return<Fragment key={c}><CR13 code={`${seq}.`} name={n} a={[t.g,t.i,t.k,t.m]}/>{ci.map((item,idx)=><IR13Edit key={item.id} item={item} onUpdate={updField} idx={idx}/>)}</Fragment>})})()}
-              {/* 사급자재대 */}<CR13 code={`${[t1,t2,t3,t4,t5,t6].filter((_,i)=>act.some(x=>x.cat===["1.","2.","3.","4.","5.","6."][i])).length+1}.`} name="사급자재대" a={[sT,0,0,0]} fill="bg-orange-50"/>{sagub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1"></td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td><td className="border px-1 py-1 text-right text-xs">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right text-xs">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td></tr>)}
-              <CR13 code={`${[t1,t2,t3,t4,t5,t6].filter((_,i)=>act.some(x=>x.cat===["1.","2.","3.","4.","5.","6."][i])).length+2}.`} name="관급자재대" a={[gTot,0,0,0]} fill="bg-red-50"/>{gwangub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1 text-center text-xs">{it.sub}</td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td><td className="border px-1 py-1 text-right text-xs">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right text-xs">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td></tr>)}
-              <tr className="bg-red-50 font-bold"><td colSpan={5} className="border px-3 py-1.5 text-center text-red-700">관급수수료 (1.5%)</td><td className="border"></td><td className="border px-1 py-1.5 text-right text-red-700">{fmt(gF)}</td><td colSpan={6} className="border"></td></tr>
+              {/* 사급자재대 */}<CR13 code={`${[t1,t2,t3,t4,t5,t6].filter((_,i)=>act.some(x=>x.cat===["1.","2.","3.","4.","5.","6."][i])).length+1}.`} name="사급자재대" a={[sT,0,0,0]} fill="bg-orange-50"/>{sagub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1"></td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border"></td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td><td className="border px-1 py-1 text-right text-xs">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right text-xs">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td></tr>)}
+              <CR13 code={`${[t1,t2,t3,t4,t5,t6].filter((_,i)=>act.some(x=>x.cat===["1.","2.","3.","4.","5.","6."][i])).length+2}.`} name="관급자재대" a={[gTot,0,0,0]} fill="bg-red-50"/>{gwangub.map((it,idx)=><tr key={it.id} className={idx%2===0?"bg-white":"bg-slate-50"}><td className="border px-1 py-1 text-center text-xs">{it.sub}</td><td className="border px-2 py-1">{it.name}</td><td className="border px-1 py-1 text-slate-500">{it.spec}</td><td className="border"></td><td className="border px-1 py-1 text-center">{it.qty}</td><td className="border px-1 py-1 text-center">{it.unit}</td><td className="border px-1 py-1 text-right">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td><td className="border px-1 py-1 text-right text-xs">{fmt(it.unitPrice)}</td><td className="border px-1 py-1 text-right text-xs">{fmt(Math.round(it.qty*it.unitPrice))}</td><td className="border"></td><td className="border"></td></tr>)}
+              <tr className="bg-red-50 font-bold"><td colSpan={6} className="border px-3 py-1.5 text-center text-red-700">관급수수료 (1.5%)</td><td className="border"></td><td className="border px-1 py-1.5 text-right text-red-700">{fmt(gF)}</td><td colSpan={6} className="border"></td></tr>
               <TR13 label="총 공 사 비" a={[grand,0,0,0]} bg="bg-slate-800" tc="text-white"/>
             </tbody></table></div></section>
 
@@ -901,8 +1082,8 @@ function Hd({n,t}){return<div className="flex items-center gap-2"><span classNam
 function IC({t,c,children}){const cls=c==="blue"?"bg-blue-50 border-blue-200":"bg-red-50 border-red-200";const tc2=c==="blue"?"text-blue-700":"text-red-700";return<div className={`${cls} border rounded-lg p-4`}><h4 className={`font-bold ${tc2} text-sm mb-2`}>{t}</h4><div className="space-y-1.5">{children}</div></div>}
 function IR({l,v}){return<div className="flex justify-between text-sm"><span className="text-slate-500">{l}</span><span className="font-medium text-slate-800">{v}</span></div>}
 function SpecC({t,items,c}){const cls={"blue":"bg-blue-50 border-blue-200","red":"bg-red-50 border-red-200","amber":"bg-amber-50 border-amber-200"}[c];return<div className={`${cls} border rounded-lg p-3`}><h4 className="font-bold text-sm mb-2">{t}</h4>{items.map((s,i)=><p key={i} className="text-xs text-slate-700">• {s}</p>)}</div>}
-function TR13({label,a,bg,tc}){return<tr className={`${bg} font-bold`}><td colSpan={5} className={`border px-3 py-1.5 text-center ${tc}`}>{label}</td><td className="border"></td><td className={`border px-1 py-1.5 text-right ${tc}`}>{fmt(a[0])}</td><td className="border"></td><td className={`border px-1 py-1.5 text-right ${tc}`}>{a[1]?fmt(a[1]):""}</td><td className="border"></td><td className={`border px-1 py-1.5 text-right ${tc}`}>{a[2]?fmt(a[2]):""}</td><td className="border"></td><td className={`border px-1 py-1.5 text-right ${tc}`}>{a[3]?fmt(a[3]):""}</td></tr>}
-function CR13({code,name,a,fill}){const bg=fill||"bg-blue-50";return<tr className={`${bg} font-bold`}><td className="border px-1 py-1 text-center text-blue-700 text-xs">{code}</td><td className="border px-2 py-1 text-blue-700">{name}</td><td className="border"></td><td className="border"></td><td className="border"></td><td className="border"></td><td className="border px-1 py-1 text-right text-blue-700">{fmt(a[0])}</td><td className="border"></td><td className="border px-1 py-1 text-right">{a[1]?fmt(a[1]):""}</td><td className="border"></td><td className="border px-1 py-1 text-right">{a[2]?fmt(a[2]):""}</td><td className="border"></td><td className="border px-1 py-1 text-right">{a[3]?fmt(a[3]):""}</td></tr>}
+function TR13({label,a,bg,tc}){return<tr className={`${bg} font-bold`}><td colSpan={6} className={`border px-3 py-1.5 text-center ${tc}`}>{label}</td><td className="border"></td><td className={`border px-1 py-1.5 text-right ${tc}`}>{fmt(a[0])}</td><td className="border"></td><td className={`border px-1 py-1.5 text-right ${tc}`}>{a[1]?fmt(a[1]):""}</td><td className="border"></td><td className={`border px-1 py-1.5 text-right ${tc}`}>{a[2]?fmt(a[2]):""}</td><td className="border"></td><td className={`border px-1 py-1.5 text-right ${tc}`}>{a[3]?fmt(a[3]):""}</td></tr>}
+function CR13({code,name,a,fill}){const bg=fill||"bg-blue-50";return<tr className={`${bg} font-bold`}><td className="border px-1 py-1 text-center text-blue-700 text-xs">{code}</td><td className="border px-2 py-1 text-blue-700">{name}</td><td className="border"></td><td className="border"></td><td className="border"></td><td className="border"></td><td className="border"></td><td className="border px-1 py-1 text-right text-blue-700">{fmt(a[0])}</td><td className="border"></td><td className="border px-1 py-1 text-right">{a[1]?fmt(a[1]):""}</td><td className="border"></td><td className="border px-1 py-1 text-right">{a[2]?fmt(a[2]):""}</td><td className="border"></td><td className="border px-1 py-1 text-right">{a[3]?fmt(a[3]):""}</td></tr>}
 function SCard({l,v,c,bold}){const cls={blue:"bg-blue-50 border-blue-200 text-blue-700",orange:"bg-orange-50 border-orange-200 text-orange-600",red:"bg-red-50 border-red-200 text-red-600",pink:"bg-pink-50 border-pink-200 text-pink-600",slate:"bg-slate-800 border-slate-700 text-white"}[c];return<div className={`rounded-lg border p-3 ${cls}`}><p className="text-xs opacity-75">{l}</p><p className={`${bold?"text-lg":"text-sm"} font-bold mt-0.5`}>{fmt(v)}원</p></div>}
 
 function XSec({s}){const sc=80,wH=s.wallH*sc,wT=s.wallT*sc*3,fW=s.foundW*sc,fD=s.foundD*sc,jT=s.japsukT*sc,ox=140,gy=265,fT=gy-fD,wTop=fT-wH;return<svg viewBox="0 0 700 420" className="w-full max-w-3xl border rounded-lg bg-white p-3"><text x="350" y="18" fontSize="12" fill="#1e293b" textAnchor="middle" fontWeight="bold">하천 호안 석축 표준단면도</text><text x="350" y="32" fontSize="9" fill="#64748b" textAnchor="middle">하천설계기준(2019) · KDS 51 40 15 · 개선복구</text><line x1="30" y1={gy} x2="640" y2={gy} stroke="#78716c" strokeWidth="2" strokeDasharray="8,4"/><text x="645" y={gy+4} fontSize="10" fill="#78716c">G.L</text><rect x={ox} y={gy} width={fW} height={jT} fill="#d6d3d1" stroke="#78716c"/><text x={ox+fW/2} y={gy+jT/2+4} fontSize="9" fill="#44403c" textAnchor="middle">잡석 T={s.japsukT}m</text><rect x={ox-5} y={gy+jT} width={fW+10} height={5} fill="#93c5fd" stroke="#3b82f6" strokeWidth="0.8"/><text x={ox+fW+15} y={gy+jT+5} fontSize="8" fill="#2563eb" fontWeight="bold">부직포</text><rect x={ox+10} y={fT} width={fW-20} height={fD} fill="#d1d5db" stroke="#374151" strokeWidth="2"/>{Array.from({length:12}).map((_,i)=><line key={i} x1={ox+15+i*15} y1={fT+2} x2={ox+5+i*15} y2={fT+fD-2} stroke="#9ca3af" strokeWidth="0.3"/>)}<text x={ox+fW/2} y={fT+fD/2-5} fontSize="11" fill="#1f2937" textAnchor="middle" fontWeight="bold">R.C 기초</text><text x={ox+fW/2} y={fT+fD/2+10} fontSize="8" fill="#4b5563" textAnchor="middle">{s.conSpec} W={s.foundW}m×D={s.foundD}m</text>{Array.from({length:6}).map((_,i)=><circle key={`b${i}`} cx={ox+20+i*30} cy={fT+fD-12} r="3" fill="#ef4444" stroke="#991b1b" strokeWidth="0.8"/>)}{Array.from({length:6}).map((_,i)=><circle key={`t${i}`} cx={ox+20+i*30} cy={fT+12} r="3" fill="#ef4444" stroke="#991b1b" strokeWidth="0.8"/>)}<text x={ox+fW+15} y={fT+fD-8} fontSize="8" fill="#dc2626" fontWeight="bold">● {s.steelSpec}</text><rect x={ox+10} y={wTop} width={wT} height={wH} fill="#fbbf24" stroke="#92400e" strokeWidth="2" rx="2"/>{Array.from({length:Math.floor(wH/18)}).map((_,i)=><Fragment key={i}><line x1={ox+12} y1={wTop+8+i*18} x2={ox+8+wT} y2={wTop+8+i*18} stroke="#92400e" strokeWidth="0.5" opacity="0.5"/></Fragment>)}<text x={ox+10+wT/2} y={wTop-8} fontSize="10" fill="#92400e" textAnchor="middle" fontWeight="bold">찰쌓기 T={Math.round(s.wallT*100)}cm</text><rect x={ox+10+wT} y={wTop} width={70} height={wH} fill="#fef3c7" stroke="#d97706" strokeDasharray="4,2"/><text x={ox+10+wT+35} y={wTop+wH/2} fontSize="9" fill="#92400e" textAnchor="middle">뒤채움</text><line x1={ox+10+wT} y1={wTop} x2={ox+10+wT} y2={fT} stroke="#3b82f6" strokeWidth="3" strokeDasharray="6,3"/><rect x={ox+10+wT+70} y={wTop-12} width={200} height={12} fill="#374151" rx="1"/><text x={ox+10+wT+170} y={wTop-18} fontSize="12" fill="#1f2937" textAnchor="middle" fontWeight="bold">도 로</text><text x="65" y={fT+25} fontSize="13" fill="#2563eb" textAnchor="middle" fontWeight="bold">하 천</text><path d={`M45,${fT+40} Q65,${fT+47} 45,${fT+57} Q65,${fT+64} 45,${fT+74}`} fill="none" stroke="#3b82f6" strokeWidth="2"/><line x1={ox-8} y1={wTop} x2={ox-8} y2={fT} stroke="#dc2626" strokeWidth="1"/><text x={ox-25} y={(wTop+fT)/2+4} fontSize="10" fill="#dc2626" textAnchor="middle" fontWeight="bold" transform={`rotate(-90,${ox-25},${(wTop+fT)/2})`}>H={s.wallH}m</text><line x1={ox+fW+8} y1={fT} x2={ox+fW+8} y2={gy} stroke="#dc2626" strokeWidth="1"/><text x={ox+fW+22} y={(fT+gy)/2+4} fontSize="10" fill="#dc2626" fontWeight="bold">D={s.foundD}m</text><line x1={ox+10} y1={fT-12} x2={ox+fW-10} y2={fT-12} stroke="#059669" strokeWidth="1"/><text x={ox+fW/2} y={fT-18} fontSize="10" fill="#059669" textAnchor="middle" fontWeight="bold">B={s.foundW}m</text><rect x="490" y="340" width="190" height="65" fill="white" stroke="#d1d5db" rx="4"/><text x="500" y="355" fontSize="9" fill="#374151" fontWeight="bold">범 례</text><rect x="500" y="360" width="14" height="9" fill="#fbbf24" stroke="#92400e"/><text x="520" y="369" fontSize="8">석축(찰쌓기)</text><rect x="500" y="374" width="14" height="9" fill="#d1d5db" stroke="#374151"/><text x="520" y="383" fontSize="8">R.C기초</text><rect x="500" y="388" width="14" height="9" fill="#d6d3d1" stroke="#78716c"/><text x="520" y="397" fontSize="8">잡석다짐</text><text x="30" y="400" fontSize="7" fill="#94a3b8">하천설계기준(2019) · KDS 51 40 15</text></svg>}
