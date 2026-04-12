@@ -65,11 +65,51 @@ const PRICE_DB = {
 
 /* ★ 단가 조회: PRICE_DB 있으면 DB, 없으면 item 자체 값 사용 */
 // 공종명 → 단가ID 자동 매핑 (PRICE_DB에 없는 경우)
-const AUTO_PRICE_MAP={"가드레일":"#.445","낙석방지망":"#.453","낙석방지책":"#.451","안전시설목":"#.460","아스팔트절삭":"#.330","덧씌우기":"#.331","보조기층":"#.306","흄관":"#.102","플륨관":"#.92"};
+// ★ 공종명 유사어 → 단가ID 자동 매핑 (부분 일치)
+const AUTO_PRICE_MAP=[
+  // [키워드배열, 단가ID, 자동규격] — 키워드 중 하나라도 포함되면 매핑
+  [["가드레일","가드","방호울타리","방호펜스"],"#.445","표준레일(지주간격2m,2W)"],
+  [["낙석방지망","낙석망"],"#.453","철망설치(기계식)"],
+  [["낙석방지책","낙석책"],"#.451","표준구간(3.0×3.0)"],
+  [["안전시설목"],"#.460",""],
+  [["아스팔트절삭","절삭"],"#.330","소규모포장"],
+  [["덧씌우기","오버레이"],"#.331","소규모포장"],
+  [["보조기층"],"#.308","기계시공-본선포장"],
+  [["프라임코팅","프라임"],"#.310","RS(C)-3,기계"],
+  [["택코팅","택코트"],"#.312","RS(C)-4,기계"],
+  [["기층아스콘","기층포설"],"#.314","소형장비(5-7cm)"],
+  [["표층아스콘","표층포설"],"#.321","소형장비"],
+  [["흄관","관부설","배수관"],"#.102","D=600mm,고무링접합"],
+  [["플륨관"],"#.92","300~500kg"],
+  [["석축쌓기","석축","찰쌓기","메쌓기"],"#.155","찰쌓기,T=35cm이하"],
+  [["레미콘타설","콘크리트타설","레미콘"],"#.193","철근(S:8-12cm),TYPE-Ⅱ"],
+  [["합판거푸집","거푸집"],"#.204","(4회) 보통"],
+  [["철근가공","철근조립","철근"],"#.216","TYPE-1-1"],
+  [["콘크리트양생","양생"],"#.276","습윤양생"],
+  [["구조물터파기","터파기"],"#.57","육상토사,기계100%"],
+  [["기초지정","잡석기초","잡석"],"#.77","잡석"],
+  [["부직포"],"#.280",""],
+  [["비닐깔기","비닐"],"#.281",""],
+  [["물푸기"],"#.282",""],
+  [["교통통제","안전처리"],"#.481","500M미만"],
+  [["표토제거","표토"],"#.22","T=20CM,굴삭기0.7㎥"],
+  [["흙깍기","토사굴착"],"#.28","보통토사,소규모,굴착기1.0㎥"],
+  [["뒤채움","뒷채움"],"#.68","소형장비"],
+  [["되메우기","되메움"],"#.70","소형장비"],
+  [["사토운반","잔토운반"],"#.127","토사,L=5.0KM"],
+  [["사면녹화","절토사면","녹화"],"#.87","T=10㎝"],
+  [["보강토옹벽","보강토"],"#.164","블록식"],
+  [["돌망태","돌망태옹벽"],"#.162",""],
+];
 function autoMapPrice(item){
   if(item.priceId&&PRICE_DB[item.priceId])return item.priceId;
-  for(const[kw,pid]of Object.entries(AUTO_PRICE_MAP)){
-    if(item.name?.includes(kw)&&PRICE_DB[pid])return pid;
+  const nm=(item.name||"").toLowerCase();
+  for(const[keywords,pid,spec]of AUTO_PRICE_MAP){
+    if(keywords.some(kw=>nm.includes(kw))&&PRICE_DB[pid]){
+      // 규격이 비어있으면 자동 채움 (참조용, item을 직접 수정하지 않음)
+      if(spec&&!item.spec) item._autoSpec=spec;
+      return pid;
+    }
   }
   return item.priceId||"";
 }
@@ -163,7 +203,8 @@ const EditTable = memo(function EditTable({items,onToggleAll,onToggle,onUpdate,a
 
 /* ★ 13열 내역서 행 — 단가 직접입력 가능 */
 const IR13Edit = memo(function IR13Edit({item, onUpdate, idx}) {
-  const hasDb = !!PRICE_DB[item.priceId];
+  const mapped = autoMapPrice(item);
+  const hasDb = !!PRICE_DB[mapped];
   const p = getPrice(item);
   const q = item.qty;
   const inpCls = "w-full text-right bg-transparent text-xs outline-none focus:bg-yellow-50 focus:ring-1 focus:ring-orange-300 rounded px-0.5 py-0.5";
@@ -172,7 +213,7 @@ const IR13Edit = memo(function IR13Edit({item, onUpdate, idx}) {
     <tr className={idx%2===0?"bg-white":"bg-slate-50"}>
       <td className="border px-1 py-1"></td>
       <td className="border px-2 py-1">{item.name}</td>
-      <td className="border px-1 py-1 text-slate-500 text-xs">{item.spec}</td>
+      <td className="border px-1 py-1 text-slate-500 text-xs">{item.spec||item._autoSpec||PRICE_DB[mapped]?.spec||""}</td>
       <td className="border px-1 py-1 text-center">{q}</td>
       <td className="border px-1 py-1 text-center">{item.unit}</td>
       {/* 합계단가 = 자동계산 */}
@@ -621,7 +662,7 @@ ${currentDamage || "(없음)"}
 
   return(
     <div className="min-h-screen bg-white" style={{fontFamily:"'Pretendard','Noto Sans KR',sans-serif"}}>
-      <div className="bg-slate-800 text-white py-5 px-4"><div className="max-w-7xl mx-auto"><p className="text-blue-300 text-xs tracking-widest mb-1">소규모주민숙원사업</p><h1 className="text-2xl font-bold">설계자동화 <span className="text-sm font-normal text-slate-400">VER2.0</span></h1></div></div>
+      <div className="bg-slate-800 text-white py-5 px-4"><div className="max-w-7xl mx-auto"><h1 className="text-3xl md:text-4xl font-black tracking-tight">소규모주민숙원사업 설계자동화 <span className="text-lg font-normal text-blue-300">VER2.0</span></h1></div></div>
       <div className="sticky top-0 z-30 bg-white border-b shadow-sm"><div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-2">{[["analysis","🔍 AI 분석"],["estimate","📊 설계내역서"]].map(([k,l])=><button key={k} onClick={()=>{setView(k);window.scrollTo(0,0)}} className={`px-5 py-2.5 text-sm rounded-lg font-bold ${view===k?"bg-blue-600 text-white shadow-md":"bg-slate-100 text-slate-700 hover:bg-slate-200"}`}>{l}</button>)}</div>
         <div className="flex gap-1 flex-wrap">
@@ -662,10 +703,7 @@ ${currentDamage || "(없음)"}
               <div>
                 <p className="text-blue-200 font-medium mb-1">복구계획</p>
                 <div className="text-slate-300 text-xs leading-relaxed space-y-0.5">
-                  {damage.filter(d=>d.enabled).map((d,i)=>{
-                    const rn=d.item.replace(/붕괴|파손|유실|매몰|노출/g,"").trim();
-                    const plan=d.item.match(/석축/)?`석축찰쌓기 ${d.qty}${d.unit}`:d.item.match(/옹벽/)?`RC옹벽 신설 ${d.qty}${d.unit}`:d.item.match(/포장|도로/)?`아스팔트 전면재포장 ${d.qty}${d.unit}`:d.item.match(/측구|배수|산마루/)?`배수공 신설 ${d.qty}${d.unit}`:d.item.match(/흄관|관로/)?`흄관부설 ${d.qty}${d.unit}`:d.item.match(/사면|녹화/)?`사면녹화공 ${d.qty}${d.unit}`:d.item.match(/낙석/)?`낙석방지책 설치 ${d.qty}${d.unit}`:d.item.match(/노반/)?`노반복구 ${d.qty}${d.unit}`:d.item.match(/가드레일/)?`가드레일 설치 ${d.qty}${d.unit}`:`${d.item} ${d.qty}${d.unit}`;
-                    return <p key={d.id}>{i+1}. {plan}</p>})}
+                  {damage.filter(d=>d.enabled).map((d,i)=><p key={d.id}>{i+1}. {d.item}: {d.qty}{d.unit} ({d.basis||""})</p>)}
                   {damage.filter(d=>d.enabled).length===0&&<p className="text-slate-500">복구설계를 입력하세요</p>}
                 </div>
               </div>
