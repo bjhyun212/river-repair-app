@@ -14,13 +14,17 @@ const CATS = ["1.","2.","3.","4.","5.","6."];
 /* API 호출 헬퍼 — 환경 자동 감지 (Netlify→직접API→에러 순서) */
 async function callAI(body) {
   const urls=["/.netlify/functions/ai-proxy","https://api.anthropic.com/v1/messages"];
+  let lastErr="";
   for(const url of urls){
     try{
       const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       if(r.ok) return await r.json();
-    }catch(e){/* 다음 URL */}
+      const errText=await r.text().catch(()=>"");
+      lastErr=`${url} → ${r.status}: ${errText.slice(0,200)}`;
+      console.error("callAI fail:",lastErr);
+    }catch(e){lastErr=`${url} → ${e.message}`;console.error("callAI error:",lastErr)}
   }
-  throw new Error("AI 서버 연결 실패");
+  throw new Error(`AI 서버 연결 실패\n${lastErr}`);
 }
 
 const PRICE_DB = {
@@ -334,7 +338,7 @@ export default function App(){
       setDamage(INIT_DAMAGE());_nid=200;setItems(INIT_ITEMS());
       setRecoveryPlan({method:"(API 연결 실패 — 기본 시나리오) 기존 구조물의 구조적 결함(기초 부실, 배수 미비, 설계 미흡)을 근본적으로 해결하기 위해 기존 구조물을 전면 철거하고, 개량 공법(RC 기초 근입 D≥1.0m, 찰쌓기 석축 신설, 배수체계 개선)으로 전면 재시공하는 개선설계를 시행한다.",steps:["1.토공: 기존 구조물 전면 철거, 터파기(근입D≥1.0m), 양질토 뒤채움·다짐","2.구조물공: 잡석기초→RC기초(25-210-12)→개량 구조물 신설→거푸집·철근·양생","3.포장공: 기존 포장 전면 철거→기층부터 재포장(보조기층+표층)","4.배수공: 배수체계 전면 개선(유공관, 측구, 집수정 신설)","5.부대공: 안전시설(가드레일,표지판), 부직포·비닐, 교통통제","6.사면공: 사면 정리 후 녹화(T=10cm) 또는 보강토 시공"]});
       setAnalyzed(true);
-      alert("AI 서버 연결 실패 → 기본 데이터로 대체.\n배포 환경에서는 실제 사진 분석이 수행됩니다.");
+      alert(`AI 서버 연결 실패 → 기본 데이터로 대체.\n\n원인: ${err2.message}\n\n※ Netlify Functions 로그 또는 브라우저 개발자도구(F12) 콘솔을 확인하세요.`);
     }finally{setAnalyzing(false)}
   },[photoFile]);
 
