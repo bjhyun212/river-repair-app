@@ -151,10 +151,10 @@ let _nid = 200;
 const nid = () => _nid++;
 
 const INIT_DAMAGE = () => [
-  {id:1,item:"석축찰쌓기",basis:"높이3.0m×연장20m=60㎡",qty:60,unit:"㎡",enabled:true},
-  {id:2,item:"아스콘포장",basis:"폭4.0m×연장20m=80㎡",qty:80,unit:"㎡",enabled:true},
-  {id:3,item:"배수관설치",basis:"φ600mm×연장15m",qty:15,unit:"m",enabled:true},
-  {id:4,item:"사면녹화",basis:"높이3.0m×연장20m=60㎡",qty:60,unit:"㎡",enabled:true},
+  {id:1,item:"석축찰쌓기",basis:"높이3.0m×연장20m=60㎡",qty:60,unit:"㎡",enabled:true,selected:false},
+  {id:2,item:"아스콘포장",basis:"폭4.0m×연장20m=80㎡",qty:80,unit:"㎡",enabled:true,selected:false},
+  {id:3,item:"배수관설치",basis:"φ600mm×연장15m",qty:15,unit:"m",enabled:true,selected:false},
+  {id:4,item:"사면녹화",basis:"높이3.0m×연장20m=60㎡",qty:60,unit:"㎡",enabled:true,selected:false},
 ];
 
 /* ★ items에 labor/material/expense 필드 추가 (PRICE_DB에 없는 항목용) */
@@ -201,8 +201,8 @@ const EditTable = memo(function EditTable({items,onToggleAll,onToggle,onUpdate,a
       <th className="border border-slate-600 px-1 py-1.5 w-24">합계금액</th>
     </tr></thead>
     <tbody>{items.map((d,idx)=>{const p=getPrice(d);return(
-      <tr key={d.id} className={!d.enabled?"bg-slate-100 opacity-40 line-through":!d.name?"bg-yellow-50":"bg-white hover:bg-blue-50"}>
-        <td className="border px-1 py-1 text-center"><input type="checkbox" checked={d.enabled} onChange={()=>onToggle(d.id)} className="w-4 h-4"/></td>
+      <tr key={d.id} className={d.selected?"bg-red-50 border-l-2 border-red-400":!d.name?"bg-yellow-50":"bg-white hover:bg-blue-50"}>
+        <td className="border px-1 py-1 text-center"><input type="checkbox" checked={d.selected||false} onChange={()=>onToggle(d.id)} className="w-4 h-4"/></td>
         <td className="border px-1 py-1 text-center text-slate-400">{idx+1}</td>
         <td className="border px-1 py-1 text-center"><input value={d.priceId} onChange={e=>onUpdate(d.id,"priceId",e.target.value)} className="w-full text-center bg-transparent text-blue-600 font-medium text-xs outline-none focus:bg-blue-50 rounded px-1 py-0.5" placeholder="#.번호"/></td>
         <td className="border px-1 py-1 text-center"><select value={d.cat} onChange={e=>onUpdate(d.id,"cat",e.target.value)} className="text-xs bg-transparent outline-none w-full">{CAT_OPTIONS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></td>
@@ -212,79 +212,99 @@ const EditTable = memo(function EditTable({items,onToggleAll,onToggle,onUpdate,a
         <td className="border px-1 py-1 text-center"><input type="number" value={d.qty} step="0.1" onChange={e=>onUpdate(d.id,"qty",e.target.value)} className="w-full text-center bg-transparent text-xs font-medium outline-none focus:bg-blue-50 rounded px-1 py-0.5"/></td>
         <td className="border px-1 py-1 text-center"><select value={d.unit} onChange={e=>onUpdate(d.id,"unit",e.target.value)} className="text-xs bg-transparent outline-none">{UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></td>
         <td className="border px-1 py-1 text-right text-xs">{fmt(p.total)}</td>
-        <td className="border px-1 py-1 text-right text-xs font-medium">{d.enabled?fmt(Math.round(d.qty*p.total)):"-"}</td>
+        <td className="border px-1 py-1 text-right text-xs font-medium">{fmt(Math.round(d.qty*p.total))}</td>
       </tr>)})}</tbody>
   </table></div>);
 });
 
-/* ★ 복구 대표 단면도 SVG */
-function CrossSection({damage}){
+/* ★ 복구 대표 단면도 SVG — 실제 설계 계산값과 일치 */
+function CrossSection({damage,items}){
   const main=damage.find(d=>d.enabled&&d.item.match(/석축|옹벽|RC/));
   if(!main) return null;
   const isWall=main.item.match(/옹벽|RC/);
-  const dim=(main.basis||"").replace(/\s/g,"");
-  const hm=dim.match(/높이(\d+\.?\d*)/)||dim.match(/(\d+\.?\d*)\s*[×x]\s*(\d+\.?\d*)/);
-  const H=hm?Number(hm[1]):3;
-  // 축척
-  const sc=50, gY=260, gX=80;
+  // parseDim과 동일한 로직으로 치수 추출
+  const b=(main.basis||"").replace(/\s/g,"");
+  let hm=b.match(/높이(\d+\.?\d*)/)||b.match(/H[=:]?(\d+\.?\d*)/i);
+  let lm=b.match(/연장(\d+\.?\d*)/)||b.match(/길이(\d+\.?\d*)/)||b.match(/L[=:]?(\d+\.?\d*)/i);
+  if(!hm||!lm){const nums=b.match(/(\d+\.?\d*)\s*[×x*]\s*(\d+\.?\d*)/);if(nums){const sorted=[Number(nums[1]),Number(nums[2])].sort((a,b)=>b-a);if(!lm)lm=[null,String(sorted[0])];if(!hm)hm=[null,String(sorted[1])]}}
+  const H=hm?Number(hm[1]):Math.min(Math.max(Math.round(Math.sqrt(main.qty/8)),2),5);
+  const L=lm?Number(lm[1]):Math.round(main.qty/H)||10;
+  // 실제 내역서 물량 참조
+  const getItemQty=(kw)=>(items||[]).filter(i=>i.enabled&&i.name?.includes(kw)).reduce((s,i)=>s+i.qty,0);
+  const conV=getItemQty("레미콘타설"), formA=getItemQty("거푸집"), steelT=getItemQty("철근");
+
+  const sc=45, gY=250, gX=90;
   if(isWall){
-    // RC 역T형 옹벽 단면도
-    const wTop=0.25*sc, wBot=(0.15+H*0.04)*sc, fB=H*0.5*sc, fT=0.3*sc;
-    const wallH=H*sc, wallX=gX+fB*0.35;
-    return(<div className="mt-6 mb-4"><h4 className="font-bold text-sm mb-2 text-slate-700">📐 대표 구조물 단면도 — RC 역T형 옹벽 (H={H}m)</h4>
-    <svg viewBox="0 0 450 320" className="w-full max-w-lg bg-white border rounded-lg" style={{maxHeight:300}}>
+    const wTtop=0.25, wTbot=+(0.15+H*0.04).toFixed(2);
+    const fB=+(H*0.5).toFixed(1), fT=+(0.15+H*0.03).toFixed(2);
+    const wallA=+((wTtop+wTbot)/2*(H-fT)).toFixed(3);
+    const footA=+(fB*fT).toFixed(3);
+    const secA=+(wallA+footA).toFixed(3);
+    return(<div className="mt-6 mb-4"><h4 className="font-bold text-sm mb-2 text-slate-700">📐 대표 구조물 단면도 — RC 역T형 옹벽 (H={H}m, L={L}m)</h4>
+    <svg viewBox="0 0 500 330" className="w-full max-w-xl bg-white border rounded-lg" style={{maxHeight:320}}>
       <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#94a3b8" strokeWidth="0.8"/></pattern>
       <pattern id="ground" width="8" height="8" patternUnits="userSpaceOnUse"><line x1="0" y1="8" x2="8" y2="0" stroke="#a3a3a3" strokeWidth="0.5"/></pattern></defs>
-      {/* 지반 */}
-      <rect x="0" y={gY} width="450" height="60" fill="url(#ground)"/>
-      <line x1="0" y1={gY} x2="450" y2={gY} stroke="#666" strokeWidth="1.5"/>
-      {/* 기초(저판) */}
-      <rect x={gX} y={gY-fT} width={fB} height={fT} fill="url(#hatch)" stroke="#334155" strokeWidth="1.5"/>
-      {/* 벽체 (사다리꼴) */}
-      <polygon points={`${wallX},${gY-fT} ${wallX+wBot},${gY-fT} ${wallX+wTop},${gY-fT-wallH} ${wallX},${gY-fT-wallH}`} fill="url(#hatch)" stroke="#334155" strokeWidth="1.5"/>
+      <rect x="0" y={gY} width="500" height="80" fill="url(#ground)"/>
+      <line x1="0" y1={gY} x2="500" y2={gY} stroke="#666" strokeWidth="2"/>
       {/* 잡석기초 */}
-      <rect x={gX-5} y={gY} width={fB+10} height={15} fill="#d4d4d4" stroke="#888" strokeWidth="1" strokeDasharray="3"/>
-      <text x={gX+fB/2} y={gY+11} textAnchor="middle" fontSize="8" fill="#666">잡석기초 T=0.3m</text>
+      <rect x={gX-5} y={gY} width={fB*sc+10} height={12} fill="#d4d4d4" stroke="#888" strokeWidth="1"/>
+      <text x={gX+fB*sc/2} y={gY+10} textAnchor="middle" fontSize="9" fill="#555">잡석기초 T=0.3m</text>
+      {/* 저판 */}
+      <rect x={gX} y={gY-fT*sc} width={fB*sc} height={fT*sc} fill="url(#hatch)" stroke="#334155" strokeWidth="1.5"/>
+      {/* 벽체 */}
+      {(()=>{const bx=gX+fB*sc*0.3;return<polygon points={`${bx},${gY-fT*sc} ${bx+wTbot*sc},${gY-fT*sc} ${bx+wTtop*sc},${gY-fT*sc-H*sc} ${bx},${gY-fT*sc-H*sc}`} fill="url(#hatch)" stroke="#334155" strokeWidth="1.5"/>})()}
       {/* 뒤채움 */}
-      <polygon points={`${wallX+wBot},${gY-fT} ${gX+fB},${gY-fT} ${gX+fB+40},${gY-fT-wallH*0.7} ${wallX+wTop+5},${gY-fT-wallH}`} fill="#fef3c7" stroke="#d97706" strokeWidth="1" strokeDasharray="4"/>
-      <text x={gX+fB+15} y={gY-fT-wallH*0.3} fontSize="9" fill="#92400e">뒤채움</text>
-      {/* 치수선 */}
-      <line x1={wallX-20} y1={gY-fT} x2={wallX-20} y2={gY-fT-wallH} stroke="#dc2626" strokeWidth="0.8"/><text x={wallX-25} y={gY-fT-wallH/2} textAnchor="end" fontSize="10" fill="#dc2626" fontWeight="bold">H={H}m</text>
-      <line x1={gX} y1={gY+25} x2={gX+fB} y2={gY+25} stroke="#2563eb" strokeWidth="0.8"/><text x={gX+fB/2} y={gY+38} textAnchor="middle" fontSize="9" fill="#2563eb">저판 B={+(H*0.5).toFixed(1)}m</text>
-      {/* 부직포 표시 */}
-      <line x1={wallX+wBot+2} y1={gY-fT} x2={wallX+wTop+2} y2={gY-fT-wallH} stroke="#16a34a" strokeWidth="2" strokeDasharray="6,3"/>
-      <text x={wallX+wBot+10} y={gY-fT-10} fontSize="8" fill="#16a34a">부직포</text>
-      <text x="225" y="18" textAnchor="middle" fontSize="12" fontWeight="bold" fill="#1e293b">RC 역T형 옹벽 표준단면도</text>
+      {(()=>{const bx=gX+fB*sc*0.3;return<polygon points={`${bx+wTbot*sc},${gY-fT*sc} ${gX+fB*sc},${gY-fT*sc} ${gX+fB*sc+50},${gY-fT*sc-H*sc*0.6} ${bx+wTtop*sc+5},${gY-fT*sc-H*sc}`} fill="#fef3c7" stroke="#d97706" strokeWidth="1" strokeDasharray="4"/>})()}
+      <text x={gX+fB*sc+20} y={gY-fT*sc-H*sc*0.25} fontSize="9" fill="#92400e">뒤채움</text>
+      {/* 부직포 */}
+      {(()=>{const bx=gX+fB*sc*0.3;return<line x1={bx+wTbot*sc+2} y1={gY-fT*sc} x2={bx+wTtop*sc+2} y2={gY-fT*sc-H*sc} stroke="#16a34a" strokeWidth="2.5" strokeDasharray="6,3"/>})()}
+      <text x={gX+fB*sc*0.3+wTbot*sc+12} y={gY-fT*sc-15} fontSize="8" fill="#16a34a">부직포</text>
+      {/* 치수선 — 높이 */}
+      <line x1={gX-25} y1={gY-fT*sc} x2={gX-25} y2={gY-fT*sc-H*sc} stroke="#dc2626" strokeWidth="1" markerEnd="url(#arr)"/>
+      <text x={gX-30} y={gY-fT*sc-H*sc/2} textAnchor="end" fontSize="11" fill="#dc2626" fontWeight="bold">H={H}m</text>
+      {/* 치수선 — 저판폭 */}
+      <line x1={gX} y1={gY+22} x2={gX+fB*sc} y2={gY+22} stroke="#2563eb" strokeWidth="1"/>
+      <text x={gX+fB*sc/2} y={gY+35} textAnchor="middle" fontSize="10" fill="#2563eb" fontWeight="bold">저판 B={fB}m</text>
+      {/* 치수 — 벽두께 */}
+      <text x={gX+fB*sc*0.3+wTtop*sc/2} y={gY-fT*sc-H*sc-8} textAnchor="middle" fontSize="8" fill="#475569">상부 {wTtop}m</text>
+      <text x={gX+fB*sc*0.3+wTbot*sc/2} y={gY-fT*sc+10} textAnchor="middle" fontSize="8" fill="#475569">하부 {wTbot}m</text>
+      {/* 제목 */}
+      <text x="250" y="18" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#1e293b">RC 역T형 옹벽 표준단면도</text>
+      {/* 물량 정보 */}
+      <text x="380" y="45" fontSize="9" fill="#475569">Con'c: {secA}㎡/m × {L}m = {+(secA*L).toFixed(1)}㎥</text>
+      <text x="380" y="58" fontSize="9" fill="#475569">거푸집: {formA||Math.round((H*2+fT*2)*L)}㎡</text>
+      {steelT>0&&<text x="380" y="71" fontSize="9" fill="#475569">철근: {steelT}ton</text>}
     </svg></div>);
   }
   // 석축 단면도
-  const slope=0.3, Ttop=0.35*sc, wallH=H*sc;
-  const Tbot=(0.35+H*slope)*sc;
-  const foundW=(0.35+H*slope+0.3)*sc, foundD=1.0*sc;
-  return(<div className="mt-6 mb-4"><h4 className="font-bold text-sm mb-2 text-slate-700">📐 대표 구조물 단면도 — 찰쌓기 석축 (H={H}m)</h4>
-  <svg viewBox="0 0 450 320" className="w-full max-w-lg bg-white border rounded-lg" style={{maxHeight:300}}>
-    <defs><pattern id="stone" width="12" height="10" patternUnits="userSpaceOnUse"><rect width="12" height="10" fill="#e2e8f0"/><rect x="1" y="1" width="5" height="4" rx="1" fill="#94a3b8"/><rect x="7" y="5" width="4" height="4" rx="1" fill="#94a3b8"/></pattern>
+  const slope=0.3, Ttop=0.35, Tbot=+(Ttop+H*slope).toFixed(2);
+  const foundW=+(Tbot+0.3).toFixed(1), foundD=1.0;
+  return(<div className="mt-6 mb-4"><h4 className="font-bold text-sm mb-2 text-slate-700">📐 대표 구조물 단면도 — 찰쌓기 석축 (H={H}m, L={L}m)</h4>
+  <svg viewBox="0 0 500 330" className="w-full max-w-xl bg-white border rounded-lg" style={{maxHeight:320}}>
+    <defs><pattern id="stone" width="14" height="12" patternUnits="userSpaceOnUse"><rect width="14" height="12" fill="#e2e8f0"/><rect x="1" y="1" width="6" height="5" rx="1.5" fill="#94a3b8" stroke="#78909c" strokeWidth="0.3"/><rect x="8" y="6" width="5" height="5" rx="1.5" fill="#94a3b8" stroke="#78909c" strokeWidth="0.3"/></pattern>
     <pattern id="ground2" width="8" height="8" patternUnits="userSpaceOnUse"><line x1="0" y1="8" x2="8" y2="0" stroke="#a3a3a3" strokeWidth="0.5"/></pattern></defs>
-    {/* 지반 */}
-    <rect x="0" y={gY} width="450" height="60" fill="url(#ground2)"/>
-    <line x1="0" y1={gY} x2="450" y2={gY} stroke="#666" strokeWidth="1.5"/>
+    <rect x="0" y={gY} width="500" height="80" fill="url(#ground2)"/>
+    <line x1="0" y1={gY} x2="500" y2={gY} stroke="#666" strokeWidth="2"/>
+    {/* 잡석기초 */}
+    <rect x={gX-5} y={gY} width={foundW*sc+10} height={12} fill="#d4d4d4" stroke="#888" strokeWidth="1"/>
+    <text x={gX+foundW*sc/2} y={gY+10} textAnchor="middle" fontSize="9" fill="#555">잡석기초 T=0.3m</text>
     {/* 기초 콘크리트 */}
-    <rect x={gX} y={gY-foundD*0.3} width={foundW} height={foundD*0.3} fill="#cbd5e1" stroke="#334155" strokeWidth="1.5"/>
-    {/* 석축 본체 (사다리꼴) */}
-    <polygon points={`${gX+10},${gY-foundD*0.3} ${gX+10+Tbot},${gY-foundD*0.3} ${gX+10+Ttop},${gY-foundD*0.3-wallH} ${gX+10},${gY-foundD*0.3-wallH}`} fill="url(#stone)" stroke="#475569" strokeWidth="1.5"/>
+    <rect x={gX} y={gY-foundD*sc*0.3} width={foundW*sc} height={foundD*sc*0.3} fill="#cbd5e1" stroke="#334155" strokeWidth="1.5"/>
+    <text x={gX+foundW*sc/2} y={gY-foundD*sc*0.15+3} textAnchor="middle" fontSize="8" fill="#334155">기초Con'c</text>
+    {/* 석축 본체 */}
+    <polygon points={`${gX+5},${gY-foundD*sc*0.3} ${gX+5+Tbot*sc},${gY-foundD*sc*0.3} ${gX+5+Ttop*sc},${gY-foundD*sc*0.3-H*sc} ${gX+5},${gY-foundD*sc*0.3-H*sc}`} fill="url(#stone)" stroke="#475569" strokeWidth="1.5"/>
     {/* 뒤채움 */}
-    <polygon points={`${gX+10+Tbot},${gY-foundD*0.3} ${gX+foundW},${gY-foundD*0.3} ${gX+foundW+30},${gY-foundD*0.3-wallH*0.6} ${gX+10+Ttop+5},${gY-foundD*0.3-wallH}`} fill="#fef3c7" stroke="#d97706" strokeWidth="1" strokeDasharray="4"/>
-    <text x={gX+foundW+5} y={gY-foundD*0.3-wallH*0.2} fontSize="9" fill="#92400e">뒤채움</text>
-    {/* 잡석 */}
-    <rect x={gX-3} y={gY} width={foundW+6} height={12} fill="#d4d4d4" stroke="#888" strokeWidth="0.8" strokeDasharray="3"/>
-    <text x={gX+foundW/2} y={gY+10} textAnchor="middle" fontSize="8" fill="#666">잡석기초</text>
+    <polygon points={`${gX+5+Tbot*sc},${gY-foundD*sc*0.3} ${gX+foundW*sc},${gY-foundD*sc*0.3} ${gX+foundW*sc+40},${gY-foundD*sc*0.3-H*sc*0.6} ${gX+5+Ttop*sc+5},${gY-foundD*sc*0.3-H*sc}`} fill="#fef3c7" stroke="#d97706" strokeWidth="1" strokeDasharray="4"/>
+    <text x={gX+foundW*sc+10} y={gY-foundD*sc*0.3-H*sc*0.2} fontSize="9" fill="#92400e">뒤채움</text>
     {/* 치수선 */}
-    <line x1={gX-15} y1={gY-foundD*0.3} x2={gX-15} y2={gY-foundD*0.3-wallH} stroke="#dc2626" strokeWidth="0.8"/>
-    <text x={gX-20} y={gY-foundD*0.3-wallH/2} textAnchor="end" fontSize="10" fill="#dc2626" fontWeight="bold">H={H}m</text>
-    <line x1={gX+10} y1={gY-foundD*0.3-wallH-15} x2={gX+10+Ttop} y2={gY-foundD*0.3-wallH-15} stroke="#2563eb" strokeWidth="0.8"/>
-    <text x={gX+10+Ttop/2} y={gY-foundD*0.3-wallH-20} textAnchor="middle" fontSize="8" fill="#2563eb">상부{+(0.35).toFixed(2)}m</text>
-    <text x={gX+10+Tbot/2} y={gY-foundD*0.3+12} textAnchor="middle" fontSize="8" fill="#2563eb">하부{+(0.35+H*slope).toFixed(2)}m</text>
-    <text x="225" y="18" textAnchor="middle" fontSize="12" fontWeight="bold" fill="#1e293b">찰쌓기 석축 표준단면도 (경사 1:{slope})</text>
+    <line x1={gX-20} y1={gY-foundD*sc*0.3} x2={gX-20} y2={gY-foundD*sc*0.3-H*sc} stroke="#dc2626" strokeWidth="1"/>
+    <text x={gX-25} y={gY-foundD*sc*0.3-H*sc/2} textAnchor="end" fontSize="11" fill="#dc2626" fontWeight="bold">H={H}m</text>
+    <text x={gX+5+Ttop*sc/2} y={gY-foundD*sc*0.3-H*sc-8} textAnchor="middle" fontSize="9" fill="#2563eb">상부 {Ttop}m</text>
+    <text x={gX+5+Tbot*sc/2} y={gY-foundD*sc*0.3+22} textAnchor="middle" fontSize="9" fill="#2563eb">하부 {Tbot}m</text>
+    <text x="250" y="18" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#1e293b">찰쌓기 석축 표준단면도 (경사 1:{slope})</text>
+    <text x="380" y="45" fontSize="9" fill="#475569">석축면적: H{H}m × L{L}m = {main.qty}㎡</text>
+    <text x="380" y="58" fontSize="9" fill="#475569">기초Con'c: {foundW}×{foundD}×{L}×0.3 = {+(foundW*foundD*L*0.3).toFixed(1)}㎥</text>
+    <text x="380" y="71" fontSize="9" fill="#475569">기초거푸집: {foundD}m×양면×{L}m = {foundD*2*L}㎡</text>
   </svg></div>);
 }
 
@@ -466,7 +486,7 @@ export default function App(){
       }
       if(result.recovery)setRecoveryPlan({method:result.recovery.method||"",steps:result.recovery.steps||[]});
       if(result.damage?.length>0){
-        const newDmg=result.damage.map((d,i)=>({id:i+1,item:d.item,basis:d.basis,qty:d.qty,unit:d.unit,enabled:true}));
+        const newDmg=result.damage.map((d,i)=>({id:i+1,item:d.item,basis:d.basis,qty:d.qty,unit:d.unit,enabled:true,selected:false}));
         setDamage(newDmg);
       }
       // designItems는 무시 — handleBuildEstimate에서 damage 기반으로 재계산
@@ -486,14 +506,14 @@ export default function App(){
   const someD=useMemo(()=>damage.some(d=>d.enabled),[damage]);
   const toggleAllD=useCallback(()=>setDamage(p=>p.map(d=>({...d,enabled:!allD}))),[allD]);
   const toggleD=useCallback(id=>setDamage(p=>p.map(d=>d.id===id?{...d,enabled:!d.enabled}:d)),[]);
-  const addDamage=useCallback(()=>setDamage(p=>[...p,{id:Date.now(),item:"",basis:"",qty:0,unit:"㎡",enabled:true}]),[]);
-  const delDamageUnchecked=useCallback(()=>{if(!window.confirm("삭제?"))return;setDamage(p=>p.filter(d=>d.enabled))},[]);
+  const addDamage=useCallback(()=>setDamage(p=>[...p,{id:Date.now(),item:"",basis:"",qty:0,unit:"㎡",enabled:true,selected:false}]),[]);
+  const delDamageChecked=useCallback(()=>{const checked=damage.filter(d=>d.selected);if(checked.length===0){alert("삭제할 항목을 체크하세요");return}if(!window.confirm(`체크된 ${checked.length}개 항목을 삭제합니다.`))return;setDamage(p=>p.filter(d=>!d.selected))},[damage]);
   const updDamage=useCallback((id,f,v)=>setDamage(p=>p.map(d=>d.id===id?{...d,[f]:f==="qty"?(Number(v)||0):v}:d)),[]);
 
   const allI=useMemo(()=>items.length>0&&items.every(d=>d.enabled),[items]);
   const someI=useMemo(()=>items.some(d=>d.enabled),[items]);
   const toggleAllI=useCallback(()=>setItems(p=>p.map(d=>({...d,enabled:!allI}))),[allI]);
-  const toggleI=useCallback(id=>setItems(p=>p.map(d=>d.id===id?{...d,enabled:!d.enabled}:d)),[]);
+  const toggleI=useCallback(id=>setItems(p=>p.map(d=>d.id===id?{...d,selected:!d.selected}:d)),[]);
 
   /* ★ updField: labor/material/expense도 숫자로 변환 */
   const updField=useCallback((id,field,value)=>{
@@ -511,7 +531,7 @@ export default function App(){
   },[]);
 
   const addItem=useCallback(()=>setItems(p=>[...p,{id:nid(),cat:"4.",name:"",spec:"",unit:"m²",qty:1,priceId:"",labor:0,material:0,expense:0,enabled:true}]),[]);
-  const delUnchecked=useCallback(()=>{if(!window.confirm("삭제?"))return;setItems(p=>p.filter(d=>d.enabled))},[]);
+  const delChecked=useCallback(()=>{const checked=items.filter(d=>d.selected);if(checked.length===0){alert("삭제할 항목을 체크하세요");return}if(!window.confirm(`체크된 ${checked.length}개 항목을 삭제합니다.`))return;setItems(p=>p.filter(d=>!d.selected))},[items]);
 
   const act=useMemo(()=>items.filter(i=>i.enabled),[items]);
   const calcCat=useCallback(c=>act.filter(i=>i.cat===c).reduce((s,i)=>{const p=getPrice(i);return{g:s.g+Math.round(i.qty*p.total),i:s.i+Math.round(i.qty*p.labor),k:s.k+Math.round(i.qty*p.material),m:s.m+Math.round(i.qty*p.expense)}},{g:0,i:0,k:0,m:0}),[act]);
@@ -916,7 +936,7 @@ ${currentDamage || "(없음)"}
     const newItems=[...merged.values()].map(r=>({
       id:id++, cat:r.cat, name:r.name, spec:r.spec, unit:r.unit,
       qty:r.qty, priceId:r.priceId, basis:r.basis,
-      labor:0, material:0, expense:0, enabled:true
+      labor:0, material:0, expense:0, enabled:true, selected:false
     }));
 
     _nid=id+200;
@@ -1159,9 +1179,9 @@ ${currentDamage || "(없음)"}
 
           <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3"><h4 className="font-bold text-red-700 text-sm mb-2">관급자재 요약</h4><div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"><div><span className="text-slate-500 text-xs">품목</span><p className="font-semibold">레미콘,철근,석재,잡석</p></div><div><span className="text-slate-500 text-xs">관급자재비</span><p className="font-bold text-red-600">{fmt(gTot)}원</p></div><div><span className="text-slate-500 text-xs">수수료율</span><p>1.5%</p></div><div><span className="text-slate-500 text-xs">관급수수료</span><p className="font-bold text-red-600">{fmt(gF)}원</p></div></div></div>
 
-          <section><div className="flex items-center justify-between flex-wrap gap-2"><Hd n="2" t="복구설계"/><div className="flex gap-1"><button onClick={addDamage} className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 font-medium">➕ 항목추가</button><button onClick={delDamageUnchecked} className="text-xs px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 font-medium">🗑️ 선택삭제</button></div></div>
+          <section><div className="flex items-center justify-between flex-wrap gap-2"><Hd n="2" t="복구설계"/><div className="flex gap-1"><button onClick={addDamage} className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 font-medium">➕ 항목추가</button><button onClick={delDamageChecked} className="text-xs px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 font-medium">🗑️ 선택삭제</button></div></div>
           <div className="mt-2 overflow-x-auto border rounded-lg"><table className="w-full text-sm border-collapse"><thead><tr className="bg-blue-700 text-white"><th className="border border-blue-600 px-2 py-2 w-8"><input type="checkbox" checked={allD} ref={el=>{if(el)el.indeterminate=!allD&&someD}} onChange={toggleAllD} className="w-4 h-4"/></th><th className="border border-blue-600 px-2 py-2 w-10">No</th><th className="border border-blue-600 px-3 py-2" style={{minWidth:150}}>공종 (복구계획)</th><th className="border border-blue-600 px-3 py-2">수량산출근거</th><th className="border border-blue-600 px-2 py-2 w-16">수량</th><th className="border border-blue-600 px-2 py-2 w-14">단위</th></tr></thead>
-          <tbody>{damage.map((d,i)=><tr key={d.id} className={!d.enabled?"bg-slate-100 opacity-40 line-through":!d.item?"bg-yellow-50":i%2===0?"bg-white":"bg-slate-50"}><td className="border px-2 py-1.5 text-center"><input type="checkbox" checked={d.enabled} onChange={()=>toggleD(d.id)} className="w-4 h-4"/></td><td className="border px-2 py-1.5 text-center font-medium">{i+1}</td><td className="border px-2 py-1.5"><input value={d.item} onChange={e=>updDamage(d.id,"item",e.target.value)} className="w-full bg-transparent text-sm font-medium text-blue-800 outline-none focus:bg-blue-50 rounded px-1" placeholder="공종명"/></td><td className="border px-2 py-1.5"><input value={d.basis} onChange={e=>updDamage(d.id,"basis",e.target.value)} className="w-full bg-transparent text-xs text-slate-600 outline-none focus:bg-blue-50 rounded px-1" placeholder="산출근거"/></td><td className="border px-1 py-1.5 text-center"><input type="number" value={d.qty} onChange={e=>updDamage(d.id,"qty",e.target.value)} className="w-full text-center bg-transparent text-sm font-bold outline-none focus:bg-blue-50 rounded"/></td><td className="border px-1 py-1.5 text-center"><select value={d.unit} onChange={e=>updDamage(d.id,"unit",e.target.value)} className="text-sm bg-transparent outline-none">{UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></td></tr>)}</tbody></table></div>
+          <tbody>{damage.map((d,i)=><tr key={d.id} className={d.selected?"bg-red-50 border-l-2 border-red-400":!d.item?"bg-yellow-50":i%2===0?"bg-white":"bg-slate-50"}><td className="border px-2 py-1.5 text-center"><input type="checkbox" checked={d.enabled} onChange={()=>toggleD(d.id)} className="w-4 h-4"/></td><td className="border px-2 py-1.5 text-center font-medium">{i+1}</td><td className="border px-2 py-1.5"><input value={d.item} onChange={e=>updDamage(d.id,"item",e.target.value)} className="w-full bg-transparent text-sm font-medium text-blue-800 outline-none focus:bg-blue-50 rounded px-1" placeholder="공종명"/></td><td className="border px-2 py-1.5"><input value={d.basis} onChange={e=>updDamage(d.id,"basis",e.target.value)} className="w-full bg-transparent text-xs text-slate-600 outline-none focus:bg-blue-50 rounded px-1" placeholder="산출근거"/></td><td className="border px-1 py-1.5 text-center"><input type="number" value={d.qty} onChange={e=>updDamage(d.id,"qty",e.target.value)} className="w-full text-center bg-transparent text-sm font-bold outline-none focus:bg-blue-50 rounded"/></td><td className="border px-1 py-1.5 text-center"><select value={d.unit} onChange={e=>updDamage(d.id,"unit",e.target.value)} className="text-sm bg-transparent outline-none">{UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></td></tr>)}</tbody></table></div>
             <div className="mt-3 text-center"><button onClick={handleBuildEstimate} className="px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow">📊 설계내역서 작성 (복구설계 반영)</button></div>
           </section>
 
@@ -1178,7 +1198,7 @@ ${currentDamage || "(없음)"}
       {view==="estimate"&&<>
         {items.length===0?<div className="p-12 bg-slate-50 border-2 border-dashed rounded-xl text-center"><p className="text-slate-500 mb-4">데이터 없음</p><button onClick={()=>setView("analysis")} className="px-4 py-2 bg-blue-600 text-white rounded-lg">← AI 분석</button></div>
         :<>
-          <section><div className="flex items-center justify-between flex-wrap gap-2"><Hd n="📋" t="설계물량 편집"/><div className="flex gap-1"><button onClick={addItem} className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 font-medium">➕ 공종추가</button><button onClick={delUnchecked} className="text-xs px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 font-medium">🗑️ 선택삭제</button></div></div>
+          <section><div className="flex items-center justify-between flex-wrap gap-2"><Hd n="📋" t="설계물량 편집"/><div className="flex gap-1"><button onClick={addItem} className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 font-medium">➕ 공종추가</button><button onClick={delChecked} className="text-xs px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 font-medium">🗑️ 선택삭제</button></div></div>
           <p className="text-xs text-blue-600 mt-1 mb-2">단가ID→자동채움 · 수량→즉시재계산 · <span className="text-orange-600 font-medium">PRICE_DB에 없는 공종은 내역서에서 노무비/재료비/경비 단가 직접입력</span></p>
           <EditTable items={[...items].sort((a,b)=>{const co={"1.":1,"2.":2,"3.":3,"4.":4,"5.":5,"6.":6};return(co[a.cat]||9)-(co[b.cat]||9)})} onToggleAll={toggleAllI} onToggle={toggleI} onUpdate={updField} allChk={allI} someChk={someI}/>
           <div className="mt-2 text-right text-sm font-bold">직접공사비: <span className="text-blue-700">{fmt(sunG)}원</span></div></section>
@@ -1226,7 +1246,7 @@ ${currentDamage || "(없음)"}
           <section><div className="grid grid-cols-2 md:grid-cols-5 gap-3">{[["직접공사비",sunG,"blue"],["사급자재비",sT,"orange"],["관급자재비",gTot,"red"],["관급수수료",gF,"pink"],["총공사비",grand,"slate"]].map(([l,v,c],i)=><SCard key={i} l={l} v={v} c={c} bold={i===4}/>)}</div></section>
 
           {/* ★ 대표 구조물 단면도 */}
-          <CrossSection damage={damage}/>
+          <CrossSection damage={damage} items={items}/>
 
           <section><Hd n="📊" t="엑셀 다운로드"/><div className="mt-3 flex gap-3 flex-wrap">{[["d","📊 설계내역서","bg-green-600 hover:bg-green-700"],["q","📋 수량산출서","bg-blue-600 hover:bg-blue-700"],["u","📑 일위대가","bg-purple-600 hover:bg-purple-700"]].map(([k,l,cls])=><button key={k} disabled={xlLoad===k} onClick={()=>handleXL(k)} className={`px-4 py-2 ${cls} text-white text-sm rounded-lg shadow disabled:opacity-50 font-medium`}>{xlLoad===k?"생성중...":l}</button>)}</div></section>
         </>}
