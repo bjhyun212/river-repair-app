@@ -1159,6 +1159,41 @@ ${dmgList}
     }
     setAiReview(prev=>({...prev,corrections:prev.corrections.map(c=>c===cor?{...c,applied:true}:c)}));
   },[]);
+
+  // ── 재검증: 현재 items 기반으로 검증 다시 실행 ──
+  const reValidate=useCallback(()=>{
+    const ni=items.filter(i=>i.enabled);
+    const sumQ=(kw)=>ni.filter(i=>i.name?.includes(kw)).reduce((s,i)=>s+i.qty,0);
+    const digT=sumQ("구조물터파기"),conT=sumQ("레미콘타설"),formT=sumQ("거푸집");
+    const cureT=sumQ("양생"),backT=sumQ("뒤채움"),satoT=sumQ("사토운반");
+    const steelT=sumQ("철근"),stoneT=sumQ("석축"),pyotoT=sumQ("표토제거");
+    const bukT=ni.filter(i=>i.name?.includes("부직포")).reduce((s,i)=>s+i.qty,0);
+    const checks=[];
+    const chk=(ok,cat,item,msg)=>checks.push({ok,cat,item,msg});
+    chk(conT<=digT||digT===0,"토공/구조물","레미콘 vs 터파기",`레미콘${Math.round(conT)}㎥ ${conT<=digT?"≤":">"} 터파기${Math.round(digT)}㎥ → ${conT<=digT?"정상":"⚠️ 과대"}`);
+    chk(cureT<=formT*1.3||formT===0,"구조물","양생 vs 거푸집",`양생${Math.round(cureT)}㎡ ${cureT<=formT*1.3?"≤":">"} 거푸집${Math.round(formT)}㎡×1.3 → ${cureT<=formT*1.3?"정상":"⚠️ 과대"}`);
+    chk(satoT<=digT||digT===0,"토공","사토 vs 터파기",`사토${Math.round(satoT)}㎥ ${satoT<=digT?"≤":">"} 터파기${Math.round(digT)}㎥ → ${satoT<=digT?"정상":"⚠️ 과대"}`);
+    chk(backT<=digT||digT===0,"토공","뒤채움 vs 터파기",`뒤채움${Math.round(backT)}㎥ ${backT<=digT?"≤":">"} 터파기${Math.round(digT)}㎥ → ${backT<=digT?"정상":"⚠️ 과대"}`);
+    if(conT>0&&steelT>0){const r=steelT/conT*1000;chk(r>=50&&r<=150,"구조물","철근배근율",`${Math.round(r)}kg/㎥ → ${r>=50&&r<=150?"정상":"⚠️ 범위초과"}`)}
+    if(formT>0&&conT>0){const r2=formT/conT;chk(r2>=2&&r2<=10,"구조물","거푸집/레미콘",`${r2.toFixed(1)} → ${r2>=2&&r2<=10?"정상":"⚠️ 범위초과"}`)}
+    if(conT>0&&formT===0)chk(false,"구조물","거푸집 누락","레미콘 있는데 거푸집 없음");
+    if(digT>0&&satoT===0)chk(false,"토공","사토 누락","터파기 있는데 사토 없음");
+    // 벤치마크
+    const CATS_MAP={"1.":"토공","2.":"구조물공","3.":"배수공","4.":"호안공","5.":"포장공","6.":"부대공"};
+    const BM=[{kw:/석축/,cat:"2.",lo:350000,hi:550000,label:"석축"},{kw:/옹벽|RC/,cat:"2.",lo:800000,hi:1500000,label:"RC옹벽"},{kw:/호안|블록/,cat:"4.",lo:80000,hi:150000,label:"호안"},{kw:/흄관|배수관/,cat:"3.",lo:80000,hi:500000,label:"배수"},{kw:/아스콘|포장/,cat:"5.",lo:15000,hi:30000,label:"포장"}];
+    const catAmts={};["1.","2.","3.","4.","5.","6."].forEach(cc=>{catAmts[cc]=ni.filter(i=>i.cat===cc).reduce((s,i)=>{const p=getPrice(i);return s+Math.round(i.qty*p.total)},0)});
+    const bmG={};
+    damage.filter(d=>d.enabled).forEach(d=>{const bm=BM.find(b=>b.kw.test(d.item));if(!bm)return;if(!bmG[bm.cat])bmG[bm.cat]={qty:0,lo:bm.lo,hi:bm.hi,label:bm.label,unit:d.unit};bmG[bm.cat].qty+=d.qty;bmG[bm.cat].lo=Math.min(bmG[bm.cat].lo,bm.lo);bmG[bm.cat].hi=Math.max(bmG[bm.cat].hi,bm.hi)});
+    Object.entries(bmG).forEach(([cc,g])=>{const amt=catAmts[cc]||0;if(!amt||!g.qty)return;const uc=Math.round(amt/g.qty);const ok=uc>=g.lo*0.7&&uc<=g.hi*1.3;chk(ok,CATS_MAP[cc]||cc,`${g.label} 벤치마크`,`${(amt/10000).toFixed(0)}만÷${g.qty}${g.unit}=${(uc/10000).toFixed(1)}만/${g.unit} (기준${(g.lo/10000).toFixed(0)}~${(g.hi/10000).toFixed(0)}만) → ${ok?"적정":uc<g.lo*0.7?"과소":"과다"}`)});
+    const okC=checks.filter(c=>c.ok).length,wC=checks.filter(c=>!c.ok).length;
+    const prevWarn=validReport?.warnCount||0;
+    const resolved=prevWarn-wC;
+    setValidReport({checks,okCount:okC,warnCount:wC,corrected:0,
+      summary:{터파기:Math.round(digT),레미콘:Math.round(conT),거푸집:Math.round(formT),양생:Math.round(cureT),뒤채움:Math.round(backT),사토:Math.round(satoT),부직포:Math.round(bukT),표토:Math.round(pyotoT)},
+      resolvedMsg:resolved>0?`✅ ${resolved}건 경고가 해소되었습니다.${wC>0?` (잔여 ${wC}건)`:" 모든 검증을 통과했습니다!"}`:null
+    });
+    setAiReview(null);
+  },[items,damage,validReport?.warnCount]);
   const handleSave=useCallback(async()=>{const json=JSON.stringify({v:"8.3",damage,items,chatLog,projName,projLoc,at:new Date().toISOString()},null,2);const blob=new Blob([json],{type:"application/json"});if(window.showSaveFilePicker){try{const handle=await window.showSaveFilePicker({suggestedName:`${projName||'소규모주민숙원'}_${new Date().toISOString().slice(0,10)}.json`,types:[{description:"JSON 파일",accept:{"application/json":[".json"]}}]});const writable=await handle.createWritable();await writable.write(blob);await writable.close();alert("저장 완료!")}catch(e){if(e.name!=="AbortError")alert("저장 오류: "+e.message)}}else{const fn=window.prompt("파일명:",`${projName||"소규모주민숙원"}_${new Date().toISOString().slice(0,10)}`);if(!fn)return;const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${fn}.json`;a.click();URL.revokeObjectURL(a.href)}},[damage,items,chatLog,projName,projLoc]);
   const loadJ=useCallback(e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);const li=d.items||d.designItems||[];const ld=d.damage||d.dmg||[];if(li.length>0){setItems(li.map(i=>({labor:0,material:0,expense:0,...i})));setDamage(ld.length?ld:INIT_DAMAGE());setAnalyzed(true);if(d.chatLog)setChatLog(d.chatLog);if(d.projName)setProjName(d.projName);if(d.projLoc)setProjLoc(d.projLoc);_nid=Math.max(...li.map(x=>x.id),200)+1;alert(`불러오기 완료! (${li.length}개)`)}else alert("데이터 없음")}catch(err){alert("오류:"+err.message)}};r.readAsText(f);e.target.value=""},[]);
   const handleXL=useCallback(async t=>{setXlLoad(t);try{if(t==="d")await genDesignXL(items,sagub,gwangub,FEE_RATE,projName,projLoc);else if(t==="q")await genQtyXL(items,gwangub,FEE_RATE,projName,projLoc);else await genUnitXL(items,sagub,gwangub,projName,projLoc)}finally{setXlLoad(null)}},[items,sagub,gwangub]);
@@ -1266,7 +1301,9 @@ ${dmgList}
                 <span className={`text-xs px-2 py-0.5 rounded-full ${validReport.warnCount>0?"bg-orange-200 text-orange-800":"bg-green-200 text-green-800"}`}>
                   {validReport.okCount}건 정상 / {validReport.warnCount}건 주의{validReport.corrected>0?` / ${validReport.corrected}건 자동보정`:""}
                 </span>
+                <button onClick={reValidate} className="ml-auto px-3 py-1 bg-slate-200 text-slate-700 text-xs rounded-lg hover:bg-slate-300 font-medium">🔄 재검증</button>
               </h4>
+              {validReport.resolvedMsg&&<div className="mb-3 px-3 py-2 bg-green-100 border border-green-300 rounded-lg text-sm text-green-800 font-medium">{validReport.resolvedMsg}</div>}
               <div className="grid grid-cols-4 md:grid-cols-8 gap-2 mb-3 text-xs">
                 {Object.entries(validReport.summary).map(([k,v])=><div key={k} className="bg-white rounded px-2 py-1.5 border text-center">
                   <p className="text-slate-400">{k}</p><p className="font-bold text-slate-700">{v.toLocaleString()}</p>
@@ -1301,7 +1338,10 @@ ${dmgList}
                       {!cor.applied?<button onClick={()=>applyCorrection(cor)} className="px-3 py-1 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shrink-0">적용</button>
                         :<span className="text-green-600 font-bold shrink-0">✅ 적용됨</span>}
                     </div>)}
-                    <button onClick={()=>{aiReview.corrections.filter(c=>!c.applied).forEach(c=>applyCorrection(c))}} className="w-full py-2 bg-blue-700 text-white rounded-lg font-bold text-sm hover:bg-blue-800">📋 전체 적용</button>
+                    <div className="flex gap-2">
+                      <button onClick={()=>{aiReview.corrections.filter(c=>!c.applied).forEach(c=>applyCorrection(c));setTimeout(()=>alert("✅ 전체 적용 완료!\n\n'재검증' 버튼을 눌러 경고 해소 여부를 확인하세요."),300)}} className="flex-1 py-2 bg-blue-700 text-white rounded-lg font-bold text-sm hover:bg-blue-800">📋 전체 적용</button>
+                      <button onClick={reValidate} className="px-4 py-2 bg-green-600 text-white rounded-lg font-bold text-sm hover:bg-green-700">🔄 재검증</button>
+                    </div>
                   </div>}
                   {(!aiReview.corrections||aiReview.corrections.length===0)&&<p className="text-xs text-slate-500">수정 제안이 없습니다.</p>}
                 </div>}
