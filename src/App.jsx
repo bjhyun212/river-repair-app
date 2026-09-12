@@ -1177,6 +1177,9 @@ ${currentDamage || "(없음)"}
           </div>
           </section>}
 
+          {/* AI 분석화면 단면도 — damage 변경 시 실시간 갱신 */}
+          {damage.length>0&&<CrossSection damage={damage} items={items}/>}
+
           <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3"><h4 className="font-bold text-red-700 text-sm mb-2">관급자재 요약</h4><div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"><div><span className="text-slate-500 text-xs">품목</span><p className="font-semibold">레미콘,철근,석재,잡석</p></div><div><span className="text-slate-500 text-xs">관급자재비</span><p className="font-bold text-red-600">{fmt(gTot)}원</p></div><div><span className="text-slate-500 text-xs">수수료율</span><p>1.5%</p></div><div><span className="text-slate-500 text-xs">관급수수료</span><p className="font-bold text-red-600">{fmt(gF)}원</p></div></div></div>
 
           <section><div className="flex items-center justify-between flex-wrap gap-2"><Hd n="2" t="복구설계"/><div className="flex gap-1"><button onClick={addDamage} className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 font-medium">➕ 항목추가</button><button onClick={delDamageChecked} className="text-xs px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 font-medium">🗑️ 선택삭제</button></div></div>
@@ -1187,7 +1190,7 @@ ${currentDamage || "(없음)"}
 
           <section><Hd n="💬" t="수정.질문"/>
           <p className="text-xs text-slate-500 mt-1 mb-2">명령: "추가: 낙석방지망 32m" · 질문: 설계·공법·기준 등 무엇이든 (AI가 전문적으로 답변)</p>
-          <div className="border rounded-lg bg-slate-50 p-3 max-h-52 overflow-y-auto space-y-2">{chatLog.length===0&&<p className="text-slate-400 text-sm text-center py-3">명령: "추가: 낙석방지망 32m", "삭제: 3", "수정: 1 수량 60"<br/>질문: "석축과 옹벽의 차이점", "기초 근입깊이 기준" 등 자유롭게</p>}{chatLog.map((msg,i)=><div key={i} className={`flex ${msg.role==="user"?"justify-end":"justify-start"}`}><div className={`max-w-md px-3 py-2 rounded-lg text-sm whitespace-pre-line ${msg.role==="user"?"bg-blue-600 text-white":"bg-white border text-slate-700"}`}>{msg.text}</div></div>)}<div ref={chatEndRef}/></div><div className="flex gap-2 mt-2"><input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChatSend()}}} placeholder="명령 또는 질문 입력..." className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"/><button onClick={handleChatSend} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm">전송</button>{chatLog.length>0&&<button onClick={()=>setChatLog([])} className="px-3 py-2 bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-300 text-xs font-medium">🗑️ 초기화</button>}</div></section>
+          <div className="border rounded-lg bg-slate-50 p-3 max-h-52 overflow-y-auto space-y-2">{chatLog.length===0&&<p className="text-slate-400 text-sm text-center py-3">명령: "추가: 낙석방지망 32m", "삭제: 3", "수정: 1 수량 60"<br/>질문: "석축과 옹벽의 차이점", "기초 근입깊이 기준" 등 자유롭게</p>}{chatLog.map((msg,i)=><div key={i} className={`flex ${msg.role==="user"?"justify-end":"justify-start"}`}><div className={`max-w-md px-3 py-2 rounded-lg text-sm whitespace-pre-line ${msg.role==="user"?"bg-blue-600 text-white":"bg-white border text-slate-700"}`}>{msg.text}</div></div>)}<div ref={chatEndRef}/></div><div className="flex gap-2 mt-2"><input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChatSend()}}} placeholder="명령 또는 질문 입력..." data-chat-input="true" className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"/><button onClick={handleChatSend} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm">전송</button>{chatLog.length>0&&<button onClick={()=>setChatLog([])} className="px-3 py-2 bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-300 text-xs font-medium">🗑️ 초기화</button>}</div></section>
 
           <section><Hd n="3" t="구조물 제원"/><div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3"><SpecC t="석축(찰쌓기)" items={[`H=${STRUCT.wallH}m, T=${STRUCT.wallT*100}cm`,`L=${STRUCT.wallL}m, 근입D=${STRUCT.foundD}m`]} c="blue"/><SpecC t="기초 콘크리트" items={[`${STRUCT.conSpec} (σck=21MPa)`,`B=${STRUCT.foundW}m, D=${STRUCT.foundD}m`,STRUCT.steelSpec]} c="red"/><SpecC t="잡석 기초" items={[`B=${STRUCT.foundW}m, T=${STRUCT.japsukT}m`,"부직포 하부+배면"]} c="amber"/></div></section>
 
@@ -1225,7 +1228,10 @@ ${currentDamage || "(없음)"}
                   <span className={c.ok?"text-slate-600":"text-orange-800 font-medium"}>{c.msg}</span>
                 </div>)}
               </div>
-              {validReport.warnCount>0&&<p className="text-xs text-orange-700 mt-2 font-medium">💡 경고 항목은 산출근거와 수량을 확인하여 직접 수정할 수 있습니다.</p>}
+              {validReport.warnCount>0&&<div className="mt-3 flex gap-2 items-center">
+                <p className="text-xs text-orange-700 font-medium">💡 경고 항목은 산출근거와 수량을 확인하여 직접 수정할 수 있습니다.</p>
+                <button onClick={()=>{const warns=validReport.checks.filter(c=>!c.ok).map(c=>`[${c.cat}] ${c.item}: ${c.msg}`).join("\n");setChatInput(`검증 경고 분석 요청:\n${warns}\n\n위 경고 항목에 대해 원인과 해결방안을 알려주세요.`);setView("analysis");setTimeout(()=>{const el=document.querySelector("[data-chat-input]");if(el)el.focus()},300)}} className="px-3 py-1.5 bg-orange-600 text-white text-xs rounded-lg hover:bg-orange-700 font-medium whitespace-nowrap">🤖 AI 검토 요청</button>
+              </div>}
             </div>
           </section>}
 
