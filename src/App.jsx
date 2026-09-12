@@ -411,7 +411,8 @@ export default function App(){
   const[xlLoad,setXlLoad]=useState(null);
   const[projName,setProjName]=useState("");
   const[projLoc,setProjLoc]=useState("");
-  const[validReport,setValidReport]=useState(null); // 물량 검증 리포트
+  const[validReport,setValidReport]=useState(null);
+  const[aiReview,setAiReview]=useState(null); // AI 검토 결과 {loading,corrections,summary}
   const fileRef=useRef(null),jsonRef=useRef(null),chatEndRef=useRef(null);
 
   const handleNewWork=useCallback(()=>{if(!window.confirm("초기화?"))return;_nid=200;setDamage([]);setItems([]);setPhotoUrl(null);setPhotoFile(null);setAnalyzed(false);setRecoveryPlan({method:"",steps:[]});setChatLog([]);setProjName("");setProjLoc("");setValidReport(null);setView("analysis")},[]);
@@ -1107,6 +1108,57 @@ ${currentDamage || "(없음)"}
 
     setView("estimate"); window.scrollTo(0,0);
   },[damage]);
+
+  // ── AI 검토: 검증 경고를 분석하여 수정 제안 ──
+  const handleAiReview=useCallback(async()=>{
+    if(!validReport||!validReport.checks.length) return;
+    setAiReview({loading:true,corrections:[],summary:""});
+    const warns=validReport.checks.filter(c=>!c.ok).map(c=>`[${c.cat}] ${c.item}: ${c.msg}`).join("\n");
+    const curItems=items.filter(i=>i.enabled).map(i=>`${i.cat} ${i.name} ${i.spec||""} ${i.qty}${i.unit} ${i.priceId}`).join("\n");
+    const dmgList=damage.filter(d=>d.enabled).map(d=>`${d.item} ${d.qty}${d.unit} (${d.basis})`).join("\n");
+    try{
+      const resp=await callAI({model:"claude-sonnet-4-5",max_tokens:1200,
+        system:"토목 수해복구 설계 검토 전문가. 반드시 유효한 JSON만 응답. 문자열 내 줄바꿈 금지.",
+        messages:[{role:"user",content:`설계내역서 검증에서 아래 경고가 발생했습니다. 원인을 분석하고 수정사항을 JSON으로 응답하세요.
+
+[검증 경고]
+${warns}
+
+[현재 설계항목]
+${curItems}
+
+[복구설계 원본]
+${dmgList}
+
+응답 형식:
+{"summary":"종합 검토 의견 한줄","corrections":[{"action":"add","cat":"5.","name":"공종명","spec":"규격","qty":숫자,"unit":"단위","priceId":"#.번호","reason":"추가사유"},{"action":"modify","name":"기존공종명","qty":새수량,"reason":"수정사유"},{"action":"delete","name":"삭제공종명","reason":"삭제사유"}]}
+
+규칙: action은 add/modify/delete만 사용. priceId는 #.22표토,#.57터파기,#.77잡석,#.155석축,#.193레미콘,#.204거푸집,#.276양생,#.280부직포,#.308보조기층,#.310프라임,#.312택코팅,#.314기층아스콘,#.321표층아스콘,#.326덧씌우기,#.445가드레일 등`}]
+      },getUserKey());
+      const text=resp.content?.map(c=>c.type==="text"?c.text:"").join("")||"";
+      let jsonStr=text.match(/```json\s*([\s\S]*?)```/)?.[1]||text.match(/(\{[\s\S]*\})/)?.[1]||"";
+      jsonStr=jsonStr.replace(/,\s*}/g,'}').replace(/,\s*]/g,']').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,' ');
+      let result;
+      try{result=JSON.parse(jsonStr)}catch{try{result=JSON.parse(jsonStr.replace(/\n/g,' '))}catch(e){result={summary:"JSON 파싱 실패: "+e.message,corrections:[]}}}
+      setAiReview({loading:false,...result});
+      addUsage();
+    }catch(e){
+      setAiReview({loading:false,summary:"AI 검토 실패: "+e.message,corrections:[]});
+    }
+  },[validReport,items,damage]);
+
+  // ── AI 수정 제안 적용 ──
+  const applyCorrection=useCallback((cor)=>{
+    if(cor.action==="add"){
+      const newId=Date.now()+Math.random();
+      setItems(p=>[...p,{id:newId,cat:cor.cat||"6.",name:cor.name,spec:cor.spec||"",unit:cor.unit||"㎡",qty:cor.qty||0,priceId:cor.priceId||"",basis:cor.reason||"",labor:0,material:0,expense:0,enabled:true,selected:false}]);
+    }else if(cor.action==="modify"){
+      setItems(p=>p.map(i=>i.name?.includes(cor.name)?{...i,qty:cor.qty,basis:i.basis+` (AI수정: ${cor.reason})`}:i));
+    }else if(cor.action==="delete"){
+      setItems(p=>p.filter(i=>!i.name?.includes(cor.name)));
+    }
+    setAiReview(prev=>({...prev,corrections:prev.corrections.map(c=>c===cor?{...c,applied:true}:c)}));
+  },[]);
   const handleSave=useCallback(async()=>{const json=JSON.stringify({v:"8.3",damage,items,chatLog,projName,projLoc,at:new Date().toISOString()},null,2);const blob=new Blob([json],{type:"application/json"});if(window.showSaveFilePicker){try{const handle=await window.showSaveFilePicker({suggestedName:`${projName||'소규모주민숙원'}_${new Date().toISOString().slice(0,10)}.json`,types:[{description:"JSON 파일",accept:{"application/json":[".json"]}}]});const writable=await handle.createWritable();await writable.write(blob);await writable.close();alert("저장 완료!")}catch(e){if(e.name!=="AbortError")alert("저장 오류: "+e.message)}}else{const fn=window.prompt("파일명:",`${projName||"소규모주민숙원"}_${new Date().toISOString().slice(0,10)}`);if(!fn)return;const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${fn}.json`;a.click();URL.revokeObjectURL(a.href)}},[damage,items,chatLog,projName,projLoc]);
   const loadJ=useCallback(e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);const li=d.items||d.designItems||[];const ld=d.damage||d.dmg||[];if(li.length>0){setItems(li.map(i=>({labor:0,material:0,expense:0,...i})));setDamage(ld.length?ld:INIT_DAMAGE());setAnalyzed(true);if(d.chatLog)setChatLog(d.chatLog);if(d.projName)setProjName(d.projName);if(d.projLoc)setProjLoc(d.projLoc);_nid=Math.max(...li.map(x=>x.id),200)+1;alert(`불러오기 완료! (${li.length}개)`)}else alert("데이터 없음")}catch(err){alert("오류:"+err.message)}};r.readAsText(f);e.target.value=""},[]);
   const handleXL=useCallback(async t=>{setXlLoad(t);try{if(t==="d")await genDesignXL(items,sagub,gwangub,FEE_RATE,projName,projLoc);else if(t==="q")await genQtyXL(items,gwangub,FEE_RATE,projName,projLoc);else await genUnitXL(items,sagub,gwangub,projName,projLoc)}finally{setXlLoad(null)}},[items,sagub,gwangub]);
@@ -1228,9 +1280,31 @@ ${currentDamage || "(없음)"}
                   <span className={c.ok?"text-slate-600":"text-orange-800 font-medium"}>{c.msg}</span>
                 </div>)}
               </div>
-              {validReport.warnCount>0&&<div className="mt-3 flex gap-2 items-center">
-                <p className="text-xs text-orange-700 font-medium">💡 경고 항목은 산출근거와 수량을 확인하여 직접 수정할 수 있습니다.</p>
-                <button onClick={()=>{const warns=validReport.checks.filter(c=>!c.ok).map(c=>`[${c.cat}] ${c.item}: ${c.msg}`).join("\n");setChatInput(`검증 경고 분석 요청:\n${warns}\n\n위 경고 항목에 대해 원인과 해결방안을 알려주세요.`);setView("analysis");setTimeout(()=>{const el=document.querySelector("[data-chat-input]");if(el)el.focus()},300)}} className="px-3 py-1.5 bg-orange-600 text-white text-xs rounded-lg hover:bg-orange-700 font-medium whitespace-nowrap">🤖 AI 검토 요청</button>
+              {validReport.warnCount>0&&<div className="mt-3 space-y-3">
+                <div className="flex gap-2 items-center">
+                  <p className="text-xs text-orange-700 font-medium">💡 경고 항목은 산출근거와 수량을 확인하여 직접 수정하거나, AI에게 검토를 요청하세요.</p>
+                  <button onClick={handleAiReview} disabled={aiReview?.loading} className="px-4 py-2 bg-orange-600 text-white text-xs rounded-lg hover:bg-orange-700 font-bold whitespace-nowrap disabled:opacity-50 shadow">{aiReview?.loading?"🔄 분석중...":"🤖 AI 검토 및 수정 제안"}</button>
+                </div>
+                {/* AI 검토 결과 */}
+                {aiReview&&!aiReview.loading&&<div className="bg-white border-2 border-blue-200 rounded-lg p-4">
+                  <h5 className="font-bold text-sm text-blue-800 mb-2">🤖 AI 검토 결과</h5>
+                  {aiReview.summary&&<p className="text-sm text-slate-700 mb-3 bg-blue-50 px-3 py-2 rounded">{aiReview.summary}</p>}
+                  {aiReview.corrections?.length>0&&<div className="space-y-2">
+                    {aiReview.corrections.map((cor,i)=><div key={i} className={`flex items-center gap-2 text-xs p-2 rounded border ${cor.applied?"bg-green-50 border-green-300":"bg-white border-slate-200"}`}>
+                      <span className={`shrink-0 px-1.5 py-0.5 rounded text-white font-bold ${cor.action==="add"?"bg-blue-500":cor.action==="modify"?"bg-amber-500":"bg-red-500"}`}>
+                        {cor.action==="add"?"추가":cor.action==="modify"?"수정":"삭제"}
+                      </span>
+                      <span className="font-medium w-28 shrink-0">{cor.name}</span>
+                      {cor.qty&&<span className="text-slate-500">{cor.qty}{cor.unit||""}</span>}
+                      {cor.priceId&&<span className="text-blue-500">{cor.priceId}</span>}
+                      <span className="flex-1 text-slate-600">{cor.reason}</span>
+                      {!cor.applied?<button onClick={()=>applyCorrection(cor)} className="px-3 py-1 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shrink-0">적용</button>
+                        :<span className="text-green-600 font-bold shrink-0">✅ 적용됨</span>}
+                    </div>)}
+                    <button onClick={()=>{aiReview.corrections.filter(c=>!c.applied).forEach(c=>applyCorrection(c))}} className="w-full py-2 bg-blue-700 text-white rounded-lg font-bold text-sm hover:bg-blue-800">📋 전체 적용</button>
+                  </div>}
+                  {(!aiReview.corrections||aiReview.corrections.length===0)&&<p className="text-xs text-slate-500">수정 제안이 없습니다.</p>}
+                </div>}
               </div>}
             </div>
           </section>}
