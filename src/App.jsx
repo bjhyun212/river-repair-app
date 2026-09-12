@@ -1137,9 +1137,21 @@ ${dmgList}
       },getUserKey());
       const text=resp.content?.map(c=>c.type==="text"?c.text:"").join("")||"";
       let jsonStr=text.match(/```json\s*([\s\S]*?)```/)?.[1]||text.match(/(\{[\s\S]*\})/)?.[1]||"";
-      jsonStr=jsonStr.replace(/,\s*}/g,'}').replace(/,\s*]/g,']').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,' ');
+      jsonStr=jsonStr.replace(/,\s*}/g,'}').replace(/,\s*]/g,']').replace(/}\s*{/g,'},{').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,' ');
       let result;
-      try{result=JSON.parse(jsonStr)}catch{try{result=JSON.parse(jsonStr.replace(/\n/g,' '))}catch(e){result={summary:"JSON 파싱 실패: "+e.message,corrections:[]}}}
+      try{result=JSON.parse(jsonStr)}catch{
+        try{result=JSON.parse(jsonStr.replace(/\n/g,' ').replace(/\r/g,' '))}catch{
+          try{result=JSON.parse(jsonStr.replace(/"([^"]*?)"/g,(m)=>m.replace(/\n/g,' ').replace(/\r/g,'')))}catch{
+            // 최종: corrections 배열만 추출 시도
+            const arrMatch=jsonStr.match(/\[[\s\S]*\]/);
+            if(arrMatch){
+              let arrStr=arrMatch[0].replace(/,\s*]/g,']').replace(/\n/g,' ');
+              try{const arr=JSON.parse(arrStr);result={summary:"AI 수정 제안 (부분 파싱)",corrections:arr}}
+              catch{result={summary:"JSON 파싱 실패. AI 응답을 참고하여 수동 수정하세요.",corrections:[],rawText:text.slice(0,500)}}
+            }else{result={summary:"JSON 파싱 실패. AI 응답을 참고하여 수동 수정하세요.",corrections:[],rawText:text.slice(0,500)}}
+          }
+        }
+      }
       setAiReview({loading:false,...result});
       addUsage();
     }catch(e){
@@ -1343,7 +1355,10 @@ ${dmgList}
                       <button onClick={reValidate} className="px-4 py-2 bg-green-600 text-white rounded-lg font-bold text-sm hover:bg-green-700">🔄 재검증</button>
                     </div>
                   </div>}
-                  {(!aiReview.corrections||aiReview.corrections.length===0)&&<p className="text-xs text-slate-500">수정 제안이 없습니다.</p>}
+                  {(!aiReview.corrections||aiReview.corrections.length===0)&&<div>
+                    <p className="text-xs text-slate-500 mb-2">수정 제안을 파싱하지 못했습니다. 아래 AI 원문을 참고하세요:</p>
+                    {aiReview.rawText&&<pre className="text-xs bg-slate-50 p-2 rounded border overflow-auto max-h-40 whitespace-pre-wrap">{aiReview.rawText}</pre>}
+                  </div>}
                 </div>}
               </div>}
             </div>
