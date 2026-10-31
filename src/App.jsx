@@ -182,7 +182,12 @@ const INIT_ITEMS = () => [
 const INIT_SAGUB=()=>[{id:101,name:"합판거푸집(자재)",spec:"합판,유로폼",unit:"m²",qty:41,unitPrice:12000,source:"거래처 견적"},{id:102,name:"부직포(자재)",spec:"부직포 원단",unit:"m²",qty:72,unitPrice:1500,source:"거래처 견적"}];
 const INIT_GWANGUB=()=>[{id:201,sub:"6.1",name:"레미콘",spec:"25-210-12",unit:"m³",qty:51,unitPrice:75000,source:"레미콘 업체"},{id:202,sub:"6.2",name:"이형철근(SD400)",spec:"HD13",unit:"ton",qty:2.6,unitPrice:950000,source:"철강 시세"},{id:203,sub:"6.3",name:"석재",spec:"자연석",unit:"m²",qty:51,unitPrice:45000,source:"석재 업체"},{id:204,sub:"6.3",name:"잡석",spec:"25-40mm",unit:"m³",qty:24,unitPrice:22000,source:"골재 업체"}];
 const FEE_RATE=0.015;
-const STRUCT={wallH:2.5,wallT:0.35,wallL:20.5,foundW:2.5,foundD:1.0,japsukT:0.5,steelSpec:"HD13 @200, SD400",conSpec:"25-210-12"};
+const STRUCT_TYPES={
+  "석축":{wallH:2.5,wallT:0.35,wallL:20.5,foundW:2.5,foundD:1.0,japsukT:0.5,steelSpec:"HD13 @200, SD400",conSpec:"25-210-12",type:"석축"},
+  "RC역T형옹벽":{wallH:3.5,wallT:0.35,wallL:20.5,foundW:3.0,foundD:1.0,japsukT:0.5,steelSpec:"HD13 @200, SD400",conSpec:"25-210-12",type:"RC역T형옹벽"},
+  "중력식옹벽":{wallH:3.0,wallT_top:0.5,wallT_bot:1.8,wallL:20.5,foundW:2.5,foundD:1.0,japsukT:0.5,steelSpec:"없음(무근콘크리트)",conSpec:"18-150-8",type:"중력식옹벽",slope:0.3}
+};
+const STRUCT=STRUCT_TYPES["석축"];
 
 /* ============================================================ EditTable */
 const EditTable = memo(function EditTable({items,onToggleAll,onToggle,onUpdate,allChk,someChk}){
@@ -1107,7 +1112,7 @@ ${currentDamage || "(없음)"}
     setValidReport(report);
 
     setView("estimate"); window.scrollTo(0,0);
-  },[damage]);
+  },[damage,wallType]);
 
   // ── AI 검토: 검증 경고를 분석하여 수정 제안 ──
   const handleAiReview=useCallback(async()=>{
@@ -1136,22 +1141,11 @@ ${dmgList}
 규칙: action은 add/modify/delete만 사용. priceId는 #.22표토,#.57터파기,#.77잡석,#.155석축,#.193레미콘,#.204거푸집,#.276양생,#.280부직포,#.308보조기층,#.310프라임,#.312택코팅,#.314기층아스콘,#.321표층아스콘,#.326덧씌우기,#.445가드레일 등`}]
       },getUserKey());
       const text=resp.content?.map(c=>c.type==="text"?c.text:"").join("")||"";
-      let jsonStr=text.match(/```json\s*([\s\S]*?)```/)?.[1]||text.match(/(\{[\s\S]*\})/)?.[1]||"";
-      jsonStr=jsonStr.replace(/,\s*}/g,'}').replace(/,\s*]/g,']').replace(/}\s*{/g,'},{').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,' ');
-      let result;
-      try{result=JSON.parse(jsonStr)}catch{
-        try{result=JSON.parse(jsonStr.replace(/\n/g,' ').replace(/\r/g,' '))}catch{
-          try{result=JSON.parse(jsonStr.replace(/"([^"]*?)"/g,(m)=>m.replace(/\n/g,' ').replace(/\r/g,'')))}catch{
-            // 최종: corrections 배열만 추출 시도
-            const arrMatch=jsonStr.match(/\[[\s\S]*\]/);
-            if(arrMatch){
-              let arrStr=arrMatch[0].replace(/,\s*]/g,']').replace(/\n/g,' ');
-              try{const arr=JSON.parse(arrStr);result={summary:"AI 수정 제안 (부분 파싱)",corrections:arr}}
-              catch{result={summary:"JSON 파싱 실패. AI 응답을 참고하여 수동 수정하세요.",corrections:[],rawText:text.slice(0,500)}}
-            }else{result={summary:"JSON 파싱 실패. AI 응답을 참고하여 수동 수정하세요.",corrections:[],rawText:text.slice(0,500)}}
-          }
-        }
+      let result = robustJsonParse(text);
+      if(!result){
+        result={summary:"JSON 파싱 실패. AI 응답을 참고하여 수동 수정하세요.",corrections:[],rawText:text.slice(0,500)};
       }
+      if(!result.corrections) result.corrections=[];
       setAiReview({loading:false,...result});
       addUsage();
     }catch(e){
@@ -1206,6 +1200,41 @@ ${dmgList}
     });
     setAiReview(null);
   },[items,damage,validReport?.warnCount]);
+
+
+  // ── FIX3: items 변경 시 사급/관급 자동 재계산 ──
+  const recalcSagubGwangub=useCallback(()=>{
+    if(!items||items.length===0) return;
+    const MAT_MAP2=[
+      {kw:["레미콘","콘크리트"],matName:"레미콘",spec:"25-210-12",unit:"㎥",price:72000,type:"관급",extract:(it)=>{const m=it.find(x=>x.name?.includes("레미콘"));return m?m.qty:0}},
+      {kw:["철근"],matName:"이형철근",spec:"SD400",unit:"ton",price:950000,type:"관급",extract:(it)=>{const m=it.find(x=>x.name?.includes("철근"));return m?m.qty:0}},
+      {kw:["석축","석재"],matName:"석재",spec:"자연석(∅300~500)",unit:"㎥",price:55000,type:"gwangub_check",extract:(it)=>{const m=it.find(x=>x.name?.includes("석축"));return m?m.qty*0.35:0}},
+      {kw:["잡석","기초지정"],matName:"잡석",spec:"∅150~300",unit:"㎥",price:28000,type:"gwangub_check",extract:(it)=>{const m=it.find(x=>x.name?.includes("잡석")||x.name?.includes("기초지정"));return m?m.qty:0}},
+      {kw:["거푸집","합판"],matName:"합판거푸집(자재)",spec:"합판12mm+유로폼",unit:"㎡",price:8500,type:"사급",extract:(it)=>{const m=it.find(x=>x.name?.includes("거푸집"));return m?m.qty:0}},
+      {kw:["부직포"],matName:"부직포(자재)",spec:"#400, 2.0m",unit:"㎡",price:1200,type:"사급",extract:(it)=>{const m=it.find(x=>x.name?.includes("부직포"));return m?m.qty:0}},
+    ];
+    const enabledItems=items.filter(i=>i.enabled);
+    const newSagub2=[], newGwangub2=[];
+    let sid=1, gid=1;
+    MAT_MAP2.forEach(mat=>{
+      const qty=mat.extract(enabledItems);
+      if(qty<=0) return;
+      const totalAmt=qty*mat.price;
+      let finalType=mat.type;
+      if(mat.type==="gwangub_check") finalType=totalAmt>=30000000?"관급":"사급";
+      const entry={id:0,name:mat.matName,spec:mat.spec,unit:mat.unit,qty:+qty.toFixed(2),unitPrice:mat.price,source:"2025 물가정보"};
+      if(finalType==="사급"){entry.id=sid++;newSagub2.push(entry)}
+      else if(finalType==="관급"){entry.id=gid++;entry.sub=mat.kw.includes("레미콘")?"6.1":mat.kw.includes("철근")?"6.2":"6.3";newGwangub2.push(entry)}
+    });
+    setSagub(newSagub2.length>0?newSagub2:INIT_SAGUB());
+    setGwangub(newGwangub2.length>0?newGwangub2:INIT_GWANGUB());
+  },[items]);
+
+  // items 변경 시 자동 재계산 트리거
+  React.useEffect(()=>{
+    if(items.length>0 && view==="estimate") recalcSagubGwangub();
+  },[items,recalcSagubGwangub,view]);
+
   const handleSave=useCallback(async()=>{const json=JSON.stringify({v:"8.3",damage,items,chatLog,projName,projLoc,at:new Date().toISOString()},null,2);const blob=new Blob([json],{type:"application/json"});if(window.showSaveFilePicker){try{const handle=await window.showSaveFilePicker({suggestedName:`${projName||'소규모주민숙원'}_${new Date().toISOString().slice(0,10)}.json`,types:[{description:"JSON 파일",accept:{"application/json":[".json"]}}]});const writable=await handle.createWritable();await writable.write(blob);await writable.close();alert("저장 완료!")}catch(e){if(e.name!=="AbortError")alert("저장 오류: "+e.message)}}else{const fn=window.prompt("파일명:",`${projName||"소규모주민숙원"}_${new Date().toISOString().slice(0,10)}`);if(!fn)return;const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${fn}.json`;a.click();URL.revokeObjectURL(a.href)}},[damage,items,chatLog,projName,projLoc]);
   const loadJ=useCallback(e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);const li=d.items||d.designItems||[];const ld=d.damage||d.dmg||[];if(li.length>0){setItems(li.map(i=>({labor:0,material:0,expense:0,...i})));setDamage(ld.length?ld:INIT_DAMAGE());setAnalyzed(true);if(d.chatLog)setChatLog(d.chatLog);if(d.projName)setProjName(d.projName);if(d.projLoc)setProjLoc(d.projLoc);_nid=Math.max(...li.map(x=>x.id),200)+1;alert(`불러오기 완료! (${li.length}개)`)}else alert("데이터 없음")}catch(err){alert("오류:"+err.message)}};r.readAsText(f);e.target.value=""},[]);
   const handleXL=useCallback(async t=>{setXlLoad(t);try{if(t==="d")await genDesignXL(items,sagub,gwangub,FEE_RATE,projName,projLoc);else if(t==="q")await genQtyXL(items,gwangub,FEE_RATE,projName,projLoc);else await genUnitXL(items,sagub,gwangub,projName,projLoc)}finally{setXlLoad(null)}},[items,sagub,gwangub]);
@@ -1277,7 +1306,7 @@ ${dmgList}
           </section>}
 
           {/* AI 분석화면 단면도 — damage 변경 시 실시간 갱신 */}
-          {damage.length>0&&<CrossSection damage={damage} items={items}/>}
+          {damage.length>0&&<CrossSection damage={damage} items={items} wallType={wallType}/>}
 
           <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3"><h4 className="font-bold text-red-700 text-sm mb-2">관급자재 요약</h4><div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"><div><span className="text-slate-500 text-xs">품목</span><p className="font-semibold">레미콘,철근,석재,잡석</p></div><div><span className="text-slate-500 text-xs">관급자재비</span><p className="font-bold text-red-600">{fmt(gTot)}원</p></div><div><span className="text-slate-500 text-xs">수수료율</span><p>1.5%</p></div><div><span className="text-slate-500 text-xs">관급수수료</span><p className="font-bold text-red-600">{fmt(gF)}원</p></div></div></div>
 
@@ -1291,9 +1320,29 @@ ${dmgList}
           <p className="text-xs text-slate-500 mt-1 mb-2">명령: "추가: 낙석방지망 32m" · 질문: 설계·공법·기준 등 무엇이든 (AI가 전문적으로 답변)</p>
           <div className="border rounded-lg bg-slate-50 p-3 max-h-52 overflow-y-auto space-y-2">{chatLog.length===0&&<p className="text-slate-400 text-sm text-center py-3">명령: "추가: 낙석방지망 32m", "삭제: 3", "수정: 1 수량 60"<br/>질문: "석축과 옹벽의 차이점", "기초 근입깊이 기준" 등 자유롭게</p>}{chatLog.map((msg,i)=><div key={i} className={`flex ${msg.role==="user"?"justify-end":"justify-start"}`}><div className={`max-w-md px-3 py-2 rounded-lg text-sm whitespace-pre-line ${msg.role==="user"?"bg-blue-600 text-white":"bg-white border text-slate-700"}`}>{msg.text}</div></div>)}<div ref={chatEndRef}/></div><div className="flex gap-2 mt-2"><input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();handleChatSend()}}} placeholder="명령 또는 질문 입력..." data-chat-input="true" className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"/><button onClick={handleChatSend} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm">전송</button>{chatLog.length>0&&<button onClick={()=>setChatLog([])} className="px-3 py-2 bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-300 text-xs font-medium">🗑️ 초기화</button>}</div></section>
 
-          <section><Hd n="3" t="구조물 제원"/><div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3"><SpecC t="석축(찰쌓기)" items={[`H=${STRUCT.wallH}m, T=${STRUCT.wallT*100}cm`,`L=${STRUCT.wallL}m, 근입D=${STRUCT.foundD}m`]} c="blue"/><SpecC t="기초 콘크리트" items={[`${STRUCT.conSpec} (σck=21MPa)`,`B=${STRUCT.foundW}m, D=${STRUCT.foundD}m`,STRUCT.steelSpec]} c="red"/><SpecC t="잡석 기초" items={[`B=${STRUCT.foundW}m, T=${STRUCT.japsukT}m`,"부직포 하부+배면"]} c="amber"/></div></section>
+          <section><Hd n="3" t="구조물 제원"/>
+          {/* 벽체 유형 선택 */}
+          <div className="mt-2 flex gap-2 items-center">
+            <span className="text-xs text-slate-500 font-medium">벽체유형:</span>
+            {["석축","RC역T형옹벽","중력식옹벽"].map(t=><button key={t} onClick={()=>setWallType(t)} className={`px-3 py-1 text-xs rounded-lg font-medium ${wallType===t?"bg-blue-600 text-white":"bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{t}</button>)}
+          </div>
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+          {wallType==="중력식옹벽"?<>
+            <SpecC t="중력식옹벽(무근콘크리트)" items={[`H=${STRUCT_TYPES["중력식옹벽"].wallH}m`,`상부T=${STRUCT_TYPES["중력식옹벽"].wallT_top}m, 하부T=${STRUCT_TYPES["중력식옹벽"].wallT_bot}m`,`L=${STRUCT_TYPES["중력식옹벽"].wallL}m`]} c="blue"/>
+            <SpecC t="기초 콘크리트" items={[`${STRUCT_TYPES["중력식옹벽"].conSpec}`,`B=${STRUCT_TYPES["중력식옹벽"].foundW}m, D=${STRUCT_TYPES["중력식옹벽"].foundD}m`,"무근콘크리트 (철근 없음)"]} c="red"/>
+            <SpecC t="잡석 기초" items={[`B=${STRUCT_TYPES["중력식옹벽"].foundW}m, T=${STRUCT_TYPES["중력식옹벽"].japsukT}m`,"부직포 하부+배면"]} c="amber"/>
+          </>:wallType==="RC역T형옹벽"?<>
+            <SpecC t="RC역T형옹벽" items={[`H=${STRUCT_TYPES["RC역T형옹벽"].wallH}m, T=${STRUCT_TYPES["RC역T형옹벽"].wallT*100}cm`,`L=${STRUCT_TYPES["RC역T형옹벽"].wallL}m, 근입D=${STRUCT_TYPES["RC역T형옹벽"].foundD}m`]} c="blue"/>
+            <SpecC t="기초 콘크리트" items={[`${STRUCT_TYPES["RC역T형옹벽"].conSpec} (σck=21MPa)`,`B=${STRUCT_TYPES["RC역T형옹벽"].foundW}m, D=${STRUCT_TYPES["RC역T형옹벽"].foundD}m`,STRUCT_TYPES["RC역T형옹벽"].steelSpec]} c="red"/>
+            <SpecC t="잡석 기초" items={[`B=${STRUCT_TYPES["RC역T형옹벽"].foundW}m, T=${STRUCT_TYPES["RC역T형옹벽"].japsukT}m`,"부직포 하부+배면"]} c="amber"/>
+          </>:<>
+            <SpecC t="석축(찰쌓기)" items={[`H=${STRUCT.wallH}m, T=${STRUCT.wallT*100}cm`,`L=${STRUCT.wallL}m, 근입D=${STRUCT.foundD}m`]} c="blue"/>
+            <SpecC t="기초 콘크리트" items={[`${STRUCT.conSpec} (σck=21MPa)`,`B=${STRUCT.foundW}m, D=${STRUCT.foundD}m`,STRUCT.steelSpec]} c="red"/>
+            <SpecC t="잡석 기초" items={[`B=${STRUCT.foundW}m, T=${STRUCT.japsukT}m`,"부직포 하부+배면"]} c="amber"/>
+          </>}
+          </div></section>
 
-          <section><Hd n="4" t="설계 표준단면도"/><p className="text-xs text-slate-500 mt-1">하천설계기준(2019) · KDS 51 40 15</p><div className="mt-3 flex justify-center"><XSec s={STRUCT}/></div></section>
+          <section><Hd n="4" t="설계 표준단면도"/><p className="text-xs text-slate-500 mt-1">하천설계기준(2019) · KDS 51 40 15</p><div className="mt-3 flex justify-center"><XSec s={STRUCT_TYPES[wallType]||STRUCT} wallType={wallType}/></div></section>
         </>}
       </>}
 
@@ -1381,7 +1430,7 @@ ${dmgList}
           <section><div className="grid grid-cols-2 md:grid-cols-5 gap-3">{[["직접공사비",sunG,"blue"],["사급자재비",sT,"orange"],["관급자재비",gTot,"red"],["관급수수료",gF,"pink"],["총공사비",grand,"slate"]].map(([l,v,c],i)=><SCard key={i} l={l} v={v} c={c} bold={i===4}/>)}</div></section>
 
           {/* ★ 대표 구조물 단면도 */}
-          <CrossSection damage={damage} items={items}/>
+          <CrossSection damage={damage} items={items} wallType={wallType}/>
 
           <section><Hd n="📊" t="엑셀 다운로드"/><div className="mt-3 flex gap-3 flex-wrap">{[["d","📊 설계내역서","bg-green-600 hover:bg-green-700"],["q","📋 수량산출서","bg-blue-600 hover:bg-blue-700"],["u","📑 일위대가","bg-purple-600 hover:bg-purple-700"]].map(([k,l,cls])=><button key={k} disabled={xlLoad===k} onClick={()=>handleXL(k)} className={`px-4 py-2 ${cls} text-white text-sm rounded-lg shadow disabled:opacity-50 font-medium`}>{xlLoad===k?"생성중...":l}</button>)}</div></section>
         </>}
@@ -1402,4 +1451,39 @@ function TR13({label,a,bg,tc}){return<tr className={`${bg} font-bold`}><td colSp
 function CR13({code,name,a,fill}){const bg=fill||"bg-blue-50";return<tr className={`${bg} font-bold`}><td className="border px-1 py-1 text-center text-blue-700 text-xs">{code}</td><td className="border px-2 py-1 text-blue-700">{name}</td><td className="border"></td><td className="border"></td><td className="border"></td><td className="border"></td><td className="border px-1 py-1 text-right text-blue-700">{fmt(a[0])}</td><td className="border"></td><td className="border px-1 py-1 text-right">{a[1]?fmt(a[1]):""}</td><td className="border"></td><td className="border px-1 py-1 text-right">{a[2]?fmt(a[2]):""}</td><td className="border"></td><td className="border px-1 py-1 text-right">{a[3]?fmt(a[3]):""}</td></tr>}
 function SCard({l,v,c,bold}){const cls={blue:"bg-blue-50 border-blue-200 text-blue-700",orange:"bg-orange-50 border-orange-200 text-orange-600",red:"bg-red-50 border-red-200 text-red-600",pink:"bg-pink-50 border-pink-200 text-pink-600",slate:"bg-slate-800 border-slate-700 text-white"}[c];return<div className={`rounded-lg border p-3 ${cls}`}><p className="text-xs opacity-75">{l}</p><p className={`${bold?"text-lg":"text-sm"} font-bold mt-0.5`}>{fmt(v)}원</p></div>}
 
-function XSec({s}){const sc=80,wH=s.wallH*sc,wT=s.wallT*sc*3,fW=s.foundW*sc,fD=s.foundD*sc,jT=s.japsukT*sc,ox=140,gy=265,fT=gy-fD,wTop=fT-wH;return<svg viewBox="0 0 700 420" className="w-full max-w-3xl border rounded-lg bg-white p-3"><text x="350" y="18" fontSize="12" fill="#1e293b" textAnchor="middle" fontWeight="bold">하천 호안 석축 표준단면도</text><text x="350" y="32" fontSize="9" fill="#64748b" textAnchor="middle">하천설계기준(2019) · KDS 51 40 15 · 개선복구</text><line x1="30" y1={gy} x2="640" y2={gy} stroke="#78716c" strokeWidth="2" strokeDasharray="8,4"/><text x="645" y={gy+4} fontSize="10" fill="#78716c">G.L</text><rect x={ox} y={gy} width={fW} height={jT} fill="#d6d3d1" stroke="#78716c"/><text x={ox+fW/2} y={gy+jT/2+4} fontSize="9" fill="#44403c" textAnchor="middle">잡석 T={s.japsukT}m</text><rect x={ox-5} y={gy+jT} width={fW+10} height={5} fill="#93c5fd" stroke="#3b82f6" strokeWidth="0.8"/><text x={ox+fW+15} y={gy+jT+5} fontSize="8" fill="#2563eb" fontWeight="bold">부직포</text><rect x={ox+10} y={fT} width={fW-20} height={fD} fill="#d1d5db" stroke="#374151" strokeWidth="2"/>{Array.from({length:12}).map((_,i)=><line key={i} x1={ox+15+i*15} y1={fT+2} x2={ox+5+i*15} y2={fT+fD-2} stroke="#9ca3af" strokeWidth="0.3"/>)}<text x={ox+fW/2} y={fT+fD/2-5} fontSize="11" fill="#1f2937" textAnchor="middle" fontWeight="bold">R.C 기초</text><text x={ox+fW/2} y={fT+fD/2+10} fontSize="8" fill="#4b5563" textAnchor="middle">{s.conSpec} W={s.foundW}m×D={s.foundD}m</text>{Array.from({length:6}).map((_,i)=><circle key={`b${i}`} cx={ox+20+i*30} cy={fT+fD-12} r="3" fill="#ef4444" stroke="#991b1b" strokeWidth="0.8"/>)}{Array.from({length:6}).map((_,i)=><circle key={`t${i}`} cx={ox+20+i*30} cy={fT+12} r="3" fill="#ef4444" stroke="#991b1b" strokeWidth="0.8"/>)}<text x={ox+fW+15} y={fT+fD-8} fontSize="8" fill="#dc2626" fontWeight="bold">● {s.steelSpec}</text><rect x={ox+10} y={wTop} width={wT} height={wH} fill="#fbbf24" stroke="#92400e" strokeWidth="2" rx="2"/>{Array.from({length:Math.floor(wH/18)}).map((_,i)=><Fragment key={i}><line x1={ox+12} y1={wTop+8+i*18} x2={ox+8+wT} y2={wTop+8+i*18} stroke="#92400e" strokeWidth="0.5" opacity="0.5"/></Fragment>)}<text x={ox+10+wT/2} y={wTop-8} fontSize="10" fill="#92400e" textAnchor="middle" fontWeight="bold">찰쌓기 T={Math.round(s.wallT*100)}cm</text><rect x={ox+10+wT} y={wTop} width={70} height={wH} fill="#fef3c7" stroke="#d97706" strokeDasharray="4,2"/><text x={ox+10+wT+35} y={wTop+wH/2} fontSize="9" fill="#92400e" textAnchor="middle">뒤채움</text><line x1={ox+10+wT} y1={wTop} x2={ox+10+wT} y2={fT} stroke="#3b82f6" strokeWidth="3" strokeDasharray="6,3"/><rect x={ox+10+wT+70} y={wTop-12} width={200} height={12} fill="#374151" rx="1"/><text x={ox+10+wT+170} y={wTop-18} fontSize="12" fill="#1f2937" textAnchor="middle" fontWeight="bold">도 로</text><text x="65" y={fT+25} fontSize="13" fill="#2563eb" textAnchor="middle" fontWeight="bold">하 천</text><path d={`M45,${fT+40} Q65,${fT+47} 45,${fT+57} Q65,${fT+64} 45,${fT+74}`} fill="none" stroke="#3b82f6" strokeWidth="2"/><line x1={ox-8} y1={wTop} x2={ox-8} y2={fT} stroke="#dc2626" strokeWidth="1"/><text x={ox-25} y={(wTop+fT)/2+4} fontSize="10" fill="#dc2626" textAnchor="middle" fontWeight="bold" transform={`rotate(-90,${ox-25},${(wTop+fT)/2})`}>H={s.wallH}m</text><line x1={ox+fW+8} y1={fT} x2={ox+fW+8} y2={gy} stroke="#dc2626" strokeWidth="1"/><text x={ox+fW+22} y={(fT+gy)/2+4} fontSize="10" fill="#dc2626" fontWeight="bold">D={s.foundD}m</text><line x1={ox+10} y1={fT-12} x2={ox+fW-10} y2={fT-12} stroke="#059669" strokeWidth="1"/><text x={ox+fW/2} y={fT-18} fontSize="10" fill="#059669" textAnchor="middle" fontWeight="bold">B={s.foundW}m</text><rect x="490" y="340" width="190" height="65" fill="white" stroke="#d1d5db" rx="4"/><text x="500" y="355" fontSize="9" fill="#374151" fontWeight="bold">범 례</text><rect x="500" y="360" width="14" height="9" fill="#fbbf24" stroke="#92400e"/><text x="520" y="369" fontSize="8">석축(찰쌓기)</text><rect x="500" y="374" width="14" height="9" fill="#d1d5db" stroke="#374151"/><text x="520" y="383" fontSize="8">R.C기초</text><rect x="500" y="388" width="14" height="9" fill="#d6d3d1" stroke="#78716c"/><text x="520" y="397" fontSize="8">잡석다짐</text><text x="30" y="400" fontSize="7" fill="#94a3b8">하천설계기준(2019) · KDS 51 40 15</text></svg>}
+function XSec({s,wallType}){
+  if(wallType==="중력식옹벽"){
+    const sc=70,ox=160,gy=260;
+    const fD=s.foundD*sc,fW=s.foundW*sc,jT=s.japsukT*sc;
+    const wH=s.wallH*sc,wTbot=(s.wallT_bot||1.8)*sc,wTtop=(s.wallT_top||0.5)*sc;
+    const fT=gy-fD,wTop=fT-wH;
+    const cx=ox+fW/2;
+    return<svg viewBox="0 0 700 400" className="w-full max-w-3xl border rounded-lg bg-white p-3">
+      <text x="350" y="18" fontSize="12" fill="#1e293b" textAnchor="middle" fontWeight="bold">중력식(무근콘크리트) 옹벽 표준단면도</text>
+      <text x="350" y="32" fontSize="9" fill="#64748b" textAnchor="middle">KDS 14 20 72 · 개선복구</text>
+      <line x1="40" y1={gy} x2="620" y2={gy} stroke="#78716c" strokeWidth="2" strokeDasharray="8,4"/>
+      <text x="625" y={gy+4} fontSize="10" fill="#78716c">G.L</text>
+      <rect x={ox} y={gy} width={fW} height={jT} fill="#d6d3d1" stroke="#78716c"/>
+      <text x={cx} y={gy+jT/2+4} fontSize="9" fill="#44403c" textAnchor="middle">잡석 T={s.japsukT}m</text>
+      <rect x={ox-5} y={gy+jT} width={fW+10} height={5} fill="#93c5fd" stroke="#3b82f6" strokeWidth="0.8"/>
+      <rect x={ox+10} y={fT} width={fW-20} height={fD} fill="#d1d5db" stroke="#374151" strokeWidth="2"/>
+      <text x={cx} y={fT+fD/2+4} fontSize="10" fill="#1f2937" textAnchor="middle" fontWeight="bold">R.C 기초 {s.conSpec}</text>
+      <polygon points={`${cx-wTbot/2},${fT} ${cx+wTbot/2},${fT} ${cx+wTtop/2},${wTop} ${cx-wTtop/2},${wTop}`} fill="#9ca3af" stroke="#374151" strokeWidth="2"/>
+      <text x={cx} y={wTop+wH/2-5} fontSize="11" fill="#1f2937" textAnchor="middle" fontWeight="bold">무근콘크리트</text>
+      <text x={cx} y={wTop+wH/2+10} fontSize="8" fill="#4b5563" textAnchor="middle">상부{s.wallT_top||0.5}m 하부{s.wallT_bot||1.8}m</text>
+      <rect x={cx+wTtop/2} y={wTop} width={70} height={wH} fill="#fef3c7" stroke="#d97706" strokeDasharray="4,2"/>
+      <text x={cx+wTtop/2+35} y={wTop+wH/2} fontSize="9" fill="#92400e" textAnchor="middle">뒤채움</text>
+      <rect x={cx+wTtop/2+70} y={wTop-12} width={150} height={12} fill="#374151" rx="1"/>
+      <text x={cx+wTtop/2+145} y={wTop-18} fontSize="12" fill="#1f2937" textAnchor="middle" fontWeight="bold">도 로</text>
+      <text x="70" y={fT+25} fontSize="13" fill="#2563eb" textAnchor="middle" fontWeight="bold">하 천</text>
+      <line x1={ox-10} y1={wTop} x2={ox-10} y2={fT} stroke="#dc2626" strokeWidth="1"/>
+      <text x={ox-30} y={(wTop+fT)/2} fontSize="10" fill="#dc2626" textAnchor="middle" fontWeight="bold" transform={`rotate(-90,${ox-30},${(wTop+fT)/2})`}>H={s.wallH}m</text>
+      <rect x="490" y="320" width="190" height="65" fill="white" stroke="#d1d5db" rx="4"/>
+      <text x="500" y="335" fontSize="9" fill="#374151" fontWeight="bold">범 례</text>
+      <rect x="500" y="342" width="14" height="9" fill="#9ca3af" stroke="#374151"/><text x="520" y="350" fontSize="8">무근콘크리트(중력식)</text>
+      <rect x="500" y="356" width="14" height="9" fill="#d1d5db" stroke="#374151"/><text x="520" y="364" fontSize="8">R.C기초</text>
+      <rect x="500" y="370" width="14" height="9" fill="#d6d3d1" stroke="#78716c"/><text x="520" y="378" fontSize="8">잡석다짐</text>
+      <text x="30" y="395" fontSize="7" fill="#94a3b8">KDS 14 20 72 · 중력식(무근콘크리트)</text>
+    </svg>
+  }
+  const sc=80,wH=s.wallH*sc,wT=(s.wallT||0.35)*sc*3,fW=s.foundW*sc,fD=s.foundD*sc,jT=s.japsukT*sc,ox=140,gy=265,fT=gy-fD,wTop=fT-wH;return<svg viewBox="0 0 700 420" className="w-full max-w-3xl border rounded-lg bg-white p-3"><text x="350" y="18" fontSize="12" fill="#1e293b" textAnchor="middle" fontWeight="bold">{wallType==="RC역T형옹벽"?"RC역T형 옹벽 표준단면도":"하천 호안 석축 표준단면도"}</text><text x="350" y="32" fontSize="9" fill="#64748b" textAnchor="middle">하천설계기준(2019) · KDS 51 40 15 · 개선복구</text><line x1="30" y1={gy} x2="640" y2={gy} stroke="#78716c" strokeWidth="2" strokeDasharray="8,4"/><text x="645" y={gy+4} fontSize="10" fill="#78716c">G.L</text><rect x={ox} y={gy} width={fW} height={jT} fill="#d6d3d1" stroke="#78716c"/><text x={ox+fW/2} y={gy+jT/2+4} fontSize="9" fill="#44403c" textAnchor="middle">잡석 T={s.japsukT}m</text><rect x={ox-5} y={gy+jT} width={fW+10} height={5} fill="#93c5fd" stroke="#3b82f6" strokeWidth="0.8"/><text x={ox+fW+15} y={gy+jT+5} fontSize="8" fill="#2563eb" fontWeight="bold">부직포</text><rect x={ox+10} y={fT} width={fW-20} height={fD} fill="#d1d5db" stroke="#374151" strokeWidth="2"/>{Array.from({length:12}).map((_,i)=><line key={i} x1={ox+15+i*15} y1={fT+2} x2={ox+5+i*15} y2={fT+fD-2} stroke="#9ca3af" strokeWidth="0.3"/>)}<text x={ox+fW/2} y={fT+fD/2-5} fontSize="11" fill="#1f2937" textAnchor="middle" fontWeight="bold">R.C 기초</text><text x={ox+fW/2} y={fT+fD/2+10} fontSize="8" fill="#4b5563" textAnchor="middle">{s.conSpec} W={s.foundW}m×D={s.foundD}m</text>{Array.from({length:6}).map((_,i)=><circle key={`b${i}`} cx={ox+20+i*30} cy={fT+fD-12} r="3" fill="#ef4444" stroke="#991b1b" strokeWidth="0.8"/>)}{Array.from({length:6}).map((_,i)=><circle key={`t${i}`} cx={ox+20+i*30} cy={fT+12} r="3" fill="#ef4444" stroke="#991b1b" strokeWidth="0.8"/>)}<text x={ox+fW+15} y={fT+fD-8} fontSize="8" fill="#dc2626" fontWeight="bold">● {s.steelSpec}</text><rect x={ox+10} y={wTop} width={wT} height={wH} fill="#fbbf24" stroke="#92400e" strokeWidth="2" rx="2"/>{Array.from({length:Math.floor(wH/18)}).map((_,i)=><Fragment key={i}><line x1={ox+12} y1={wTop+8+i*18} x2={ox+8+wT} y2={wTop+8+i*18} stroke="#92400e" strokeWidth="0.5" opacity="0.5"/></Fragment>)}<text x={ox+10+wT/2} y={wTop-8} fontSize="10" fill="#92400e" textAnchor="middle" fontWeight="bold">찰쌓기 T={Math.round((s.wallT||0.35)*100)}cm</text><rect x={ox+10+wT} y={wTop} width={70} height={wH} fill="#fef3c7" stroke="#d97706" strokeDasharray="4,2"/><text x={ox+10+wT+35} y={wTop+wH/2} fontSize="9" fill="#92400e" textAnchor="middle">뒤채움</text><line x1={ox+10+wT} y1={wTop} x2={ox+10+wT} y2={fT} stroke="#3b82f6" strokeWidth="3" strokeDasharray="6,3"/><rect x={ox+10+wT+70} y={wTop-12} width={200} height={12} fill="#374151" rx="1"/><text x={ox+10+wT+170} y={wTop-18} fontSize="12" fill="#1f2937" textAnchor="middle" fontWeight="bold">도 로</text><text x="65" y={fT+25} fontSize="13" fill="#2563eb" textAnchor="middle" fontWeight="bold">하 천</text><path d={`M45,${fT+40} Q65,${fT+47} 45,${fT+57} Q65,${fT+64} 45,${fT+74}`} fill="none" stroke="#3b82f6" strokeWidth="2"/><line x1={ox-8} y1={wTop} x2={ox-8} y2={fT} stroke="#dc2626" strokeWidth="1"/><text x={ox-25} y={(wTop+fT)/2+4} fontSize="10" fill="#dc2626" textAnchor="middle" fontWeight="bold" transform={`rotate(-90,${ox-25},${(wTop+fT)/2})`}>H={s.wallH}m</text><line x1={ox+fW+8} y1={fT} x2={ox+fW+8} y2={gy} stroke="#dc2626" strokeWidth="1"/><text x={ox+fW+22} y={(fT+gy)/2+4} fontSize="10" fill="#dc2626" fontWeight="bold">D={s.foundD}m</text><line x1={ox+10} y1={fT-12} x2={ox+fW-10} y2={fT-12} stroke="#059669" strokeWidth="1"/><text x={ox+fW/2} y={fT-18} fontSize="10" fill="#059669" textAnchor="middle" fontWeight="bold">B={s.foundW}m</text><rect x="490" y="340" width="190" height="65" fill="white" stroke="#d1d5db" rx="4"/><text x="500" y="355" fontSize="9" fill="#374151" fontWeight="bold">범 례</text><rect x="500" y="360" width="14" height="9" fill="#fbbf24" stroke="#92400e"/><text x="520" y="369" fontSize="8">석축(찰쌓기)</text><rect x="500" y="374" width="14" height="9" fill="#d1d5db" stroke="#374151"/><text x="520" y="383" fontSize="8">R.C기초</text><rect x="500" y="388" width="14" height="9" fill="#d6d3d1" stroke="#78716c"/><text x="520" y="397" fontSize="8">잡석다짐</text><text x="30" y="400" fontSize="7" fill="#94a3b8">하천설계기준(2019) · KDS 51 40 15</text></svg>}
