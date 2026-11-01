@@ -656,7 +656,9 @@ ${currentDamage || "(없음)"}
         }catch(je){console.error("JSON파싱오류",je)}
         // JSON 태그 제거하여 설명만 표시
         text = text.replace(/<!--DAMAGE_UPDATE-->[\s\S]*?<!--\/DAMAGE_UPDATE-->/,"").trim();
-        text = "✅ 피해현황이 수정되었습니다.\n\n" + text;
+        text = "✅ 피해현황이 수정되었습니다. 설계내역서를 자동 재생성합니다.\n\n" + text;
+        // damage 변경 시 내역서 자동 재생성 (다음 렌더 사이클에서 실행)
+        setTimeout(()=>handleBuildEstimate(),100);
       }
 
       setChatLog(p=>p.map(m=>m.text==="⏳ AI 처리 중..."?{...m,text:text||"처리 완료"}:m));
@@ -684,7 +686,7 @@ ${currentDamage || "(없음)"}
       setChatLog(p=>p.map(m=>m.text==="⏳ AI 처리 중..."?{...m,text:reply}:m));
     }
     chatEndRef.current?.scrollIntoView({behavior:"smooth"});
-  },[chatInput,damage,recoveryPlan]);
+  },[chatInput,damage,recoveryPlan,handleBuildEstimate]);
 
   /* ★ 설계내역서 작성 — 피해현황 기반 설계물량 동적 생성 */
   const handleBuildEstimate=useCallback(()=>{
