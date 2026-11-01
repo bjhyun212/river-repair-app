@@ -943,6 +943,17 @@ ${currentDamage || "(없음)"}
       else if(d.item.match(/절삭|덧씌/)){
         push("5.","절삭후아스팔트덧씌우기","B-Type(1회절삭,1회포장)","m²",A,"#.326",`${label}(${ob}): 절삭+덧씌우기 면적=${A}㎡`);
       }
+      else if(d.item.match(/콘크리트/)){
+        // 콘크리트포장: 면적(m²) 기준 → 체적 환산
+        const thick=0.2; // 포장두께 20cm
+        const volC=+(A*thick).toFixed(1);
+        const japV=+(A*0.15).toFixed(1);
+        const formA=+(A*0.1).toFixed(1);
+        push("5.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}(${ob}): 보조기층 면적${A}㎡×T=0.15m=${japV}㎥`);
+        push("5.","레미콘타설","무근(S:8-12cm),TYPE-Ⅱ,펌프카","m³",volC,"#.185",`${label}(${ob}): 콘크리트포장 면적${A}㎡×T=${thick}m=${volC}㎥`);
+        push("5.","합판거푸집","(4회) 보통","m²",formA,"#.204",`${label}(${ob}): 거푸집 면적=${formA}㎡(측면 간이산출)`);
+        push("5.","콘크리트양생","습윤양생","m²",A,"#.276",`${label}(${ob}): 양생 면적=${A}㎡`);
+      }
       else {
         const japV=+(A*0.15).toFixed(1);
         push("5.","보조기층포설및다짐","기계시공-본선포장","m³",japV,"#.308",`${label}(${ob}): 보조기층 면적${A}㎡×T=0.15m=${japV}㎥`);
