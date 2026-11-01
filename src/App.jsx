@@ -223,17 +223,21 @@ const EditTable = memo(function EditTable({items,onToggleAll,onToggle,onUpdate,a
 });
 
 /* ★ 복구 대표 단면도 SVG — 실제 설계 계산값과 일치 */
-function CrossSection({damage,items}){
+function CrossSection({damage,items,wallType}){
   const main=damage.find(d=>d.enabled&&d.item.match(/석축|옹벽|RC/));
   if(!main) return null;
-  const isWall=main.item.match(/옹벽|RC/);
+  // wallType prop 우선 사용, 없으면 damage item에서 판단 (옹벽/RC 우선)
+  const wallMatch=damage.find(d=>d.enabled&&d.item.match(/옹벽|RC/));
+  const isWall=wallType?wallType.match(/옹벽|RC/):wallMatch?true:main.item.match(/옹벽|RC/);
+  // wallType이 옹벽/RC면 해당 damage에서 치수 추출
+  const dimSource=(wallType&&wallType.match(/옹벽|RC/)&&wallMatch)?wallMatch:main;
   // parseDim과 동일한 로직으로 치수 추출
-  const b=(main.basis||"").replace(/\s/g,"");
+  const b=(dimSource.basis||"").replace(/\s/g,"");
   let hm=b.match(/높이(\d+\.?\d*)/)||b.match(/H[=:]?(\d+\.?\d*)/i);
   let lm=b.match(/연장(\d+\.?\d*)/)||b.match(/길이(\d+\.?\d*)/)||b.match(/L[=:]?(\d+\.?\d*)/i);
   if(!hm||!lm){const nums=b.match(/(\d+\.?\d*)\s*[×x*]\s*(\d+\.?\d*)/);if(nums){const sorted=[Number(nums[1]),Number(nums[2])].sort((a,b)=>b-a);if(!lm)lm=[null,String(sorted[0])];if(!hm)hm=[null,String(sorted[1])]}}
-  const H=hm?Number(hm[1]):Math.min(Math.max(Math.round(Math.sqrt(main.qty/8)),2),5);
-  const L=lm?Number(lm[1]):Math.round(main.qty/H)||10;
+  const H=hm?Number(hm[1]):Math.min(Math.max(Math.round(Math.sqrt(dimSource.qty/8)),2),5);
+  const L=lm?Number(lm[1]):Math.round(dimSource.qty/H)||10;
   // 실제 내역서 물량 참조
   const getItemQty=(kw)=>(items||[]).filter(i=>i.enabled&&i.name?.includes(kw)).reduce((s,i)=>s+i.qty,0);
   const conV=getItemQty("레미콘타설"), formA=getItemQty("거푸집"), steelT=getItemQty("철근");
@@ -515,7 +519,32 @@ export default function App(){
   const toggleD=useCallback(id=>setDamage(p=>p.map(d=>d.id===id?{...d,selected:!d.selected}:d)),[]);
   const addDamage=useCallback(()=>setDamage(p=>[...p,{id:Date.now(),item:"",basis:"",qty:0,unit:"㎡",enabled:true,selected:false}]),[]);
   const delDamageChecked=useCallback(()=>{const checked=damage.filter(d=>d.selected);if(checked.length===0){alert("삭제할 항목을 체크하세요");return}if(!window.confirm(`체크된 ${checked.length}개 항목을 삭제합니다.`))return;setDamage(p=>p.filter(d=>!d.selected))},[damage]);
-  const updDamage=useCallback((id,f,v)=>setDamage(p=>p.map(d=>d.id===id?{...d,[f]:f==="qty"?(Number(v)||0):v}:d)),[]);
+  // 산출근거 텍스트에서 수량 자동계산
+  const parseBasisQty=useCallback((text)=>{
+    if(!text) return null;
+    const t=text.replace(/\s/g,"");
+    // "= 숫자" 패턴 (마지막 = 뒤의 숫자)
+    const eqMatch=t.match(/=\s*(\d+\.?\d*)(?:[㎡㎥m²m³]|$)/);
+    // "숫자 × 숫자 × ..." 곱셈 패턴
+    const nums=t.match(/(\d+\.?\d*)\s*[×x*]\s*(\d+\.?\d*)(?:\s*[×x*]\s*(\d+\.?\d*))?/i);
+    if(eqMatch) return Number(eqMatch[1]);
+    if(nums){
+      let result=Number(nums[1])*Number(nums[2]);
+      if(nums[3]) result*=Number(nums[3]);
+      return Math.round(result*100)/100;
+    }
+    return null;
+  },[]);
+  const updDamage=useCallback((id,f,v)=>setDamage(p=>p.map(d=>{
+    if(d.id!==id) return d;
+    const updated={...d,[f]:f==="qty"?(Number(v)||0):v};
+    // basis 변경 시 수량 자동계산
+    if(f==="basis"){
+      const calc=parseBasisQty(v);
+      if(calc!==null) updated.qty=calc;
+    }
+    return updated;
+  })),[parseBasisQty]);
 
   const allI=useMemo(()=>items.length>0&&items.every(d=>d.enabled),[items]);
   const someI=useMemo(()=>items.some(d=>d.enabled),[items]);
