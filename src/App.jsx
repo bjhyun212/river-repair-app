@@ -532,12 +532,19 @@ export default function App(){
     if(!text) return null;
     // "= 숫자" 제거한 순수 계산식 부분 추출
     const noResult=text.replace(/\s*=\s*\d+\.?\d*\s*(?:㎡|㎥|m²|m³|m2|m3|m)?\s*$/,"").trim();
-    // 1) 곱셈기호(×, *, x)로 분할하여 각 세그먼트에서 숫자 추출 후 곱셈
+    // 1) 곱셈기호(×, *, x)로 분할 — 규격 패턴 제외하고 치수만 추출
     const parts=noResult.split(/\s*[×*]\s*|\s+x\s+/i);
     if(parts.length>=2){
       const nums=[];
-      for(const p of parts){const an=p.match(/\d+\.?\d*/g);if(an&&an.length>0)nums.push(Number(an[an.length-1]))}
+      for(const p of parts){
+        const t=p.trim();
+        if(/^D\d/i.test(t)) continue;           // D200, D300mm 등 관경규격 제외
+        if(/^\d+\s*[x×]\s*\d+/.test(t)) continue; // 300x300 등 단면규격 제외
+        const an=p.match(/\d+\.?\d*/g);
+        if(an&&an.length>0)nums.push(Number(an[an.length-1]));
+      }
       if(nums.length>=2) return Math.round(nums.reduce((a,b)=>a*b,1)*100)/100;
+      if(nums.length===1) return nums[0]; // 규격 제외 후 치수 1개면 그 값 반환
     }
     // 2) 곱셈 없으면 계산식 부분에서 단일 숫자 추출 (연장27m → 27)
     if(noResult){
