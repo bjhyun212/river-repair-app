@@ -522,18 +522,16 @@ export default function App(){
   // 산출근거 텍스트에서 수량 자동계산
   const parseBasisQty=useCallback((text)=>{
     if(!text) return null;
-    const t=text.replace(/\s/g,"");
-    // "= 숫자" 패턴 (마지막 = 뒤의 숫자)
-    const eqMatch=t.match(/=\s*(\d+\.?\d*)(?:[㎡㎥m²m³]|$)/);
-    // "숫자 × 숫자 × ..." 곱셈 패턴
-    const nums=t.match(/(\d+\.?\d*)\s*[×x*]\s*(\d+\.?\d*)(?:\s*[×x*]\s*(\d+\.?\d*))?/i);
+    // 1) "= 숫자" 패턴 (계산 결과값만 — "L=20" 같은 변수할당 제외)
+    const eqMatch=text.match(/[\dm㎡㎥²³]\s*=\s*(\d+\.?\d*)\s*(?:[㎡㎥m²m³]?\s*)$/);
     if(eqMatch) return Number(eqMatch[1]);
-    if(nums){
-      let result=Number(nums[1])*Number(nums[2]);
-      if(nums[3]) result*=Number(nums[3]);
-      return Math.round(result*100)/100;
-    }
-    return null;
+    // 2) 곱셈기호(×, *, x)로 분할하여 각 세그먼트에서 숫자 추출 후 곱셈
+    const parts=text.split(/\s*[×*]\s*|\s+x\s+/i);
+    if(parts.length<2) return null;
+    const nums=[];
+    for(const p of parts){const an=p.match(/\d+\.?\d*/g);if(an&&an.length>0)nums.push(Number(an[an.length-1]))}
+    if(nums.length<2) return null;
+    return Math.round(nums.reduce((a,b)=>a*b,1)*100)/100;
   },[]);
   const updDamage=useCallback((id,f,v)=>setDamage(p=>p.map(d=>{
     if(d.id!==id) return d;
