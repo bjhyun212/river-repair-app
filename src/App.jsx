@@ -531,26 +531,36 @@ export default function App(){
   const parseBasisQty=useCallback((text)=>{
     if(!text) return null;
     // "= 숫자" 제거한 순수 계산식 부분 추출
-    const noResult=text.replace(/\s*=\s*\d+\.?\d*\s*[㎡㎥m²m³]*\s*$/,"");
-    // 곱셈기호(×, *, x)로 분할하여 각 세그먼트에서 숫자 추출 후 곱셈
+    const noResult=text.replace(/\s*=\s*\d+\.?\d*\s*(?:㎡|㎥|m²|m³|m2|m3|m)?\s*$/,"").trim();
+    // 1) 곱셈기호(×, *, x)로 분할하여 각 세그먼트에서 숫자 추출 후 곱셈
     const parts=noResult.split(/\s*[×*]\s*|\s+x\s+/i);
     if(parts.length>=2){
       const nums=[];
       for(const p of parts){const an=p.match(/\d+\.?\d*/g);if(an&&an.length>0)nums.push(Number(an[an.length-1]))}
       if(nums.length>=2) return Math.round(nums.reduce((a,b)=>a*b,1)*100)/100;
     }
-    // 곱셈 패턴 없으면 "= 숫자" 패턴 사용 (결과값만)
-    const eqMatch=text.match(/\S\s+=\s*(\d+\.?\d*)\s*[㎡㎥m²m³]*\s*$/);
+    // 2) 곱셈 없으면 계산식 부분에서 단일 숫자 추출 (연장27m → 27)
+    if(noResult){
+      const singleNums=noResult.match(/\d+\.?\d*/g);
+      if(singleNums&&singleNums.length===1) return Number(singleNums[0]);
+    }
+    // 3) 위 모두 해당 없으면 원문의 "= 숫자" 패턴
+    const eqMatch=text.match(/\S\s+=\s*(\d+\.?\d*)\s*(?:㎡|㎥|m²|m³|m2|m3|m)?\s*$/);
     if(eqMatch) return Number(eqMatch[1]);
     return null;
   },[]);
   const updDamage=useCallback((id,f,v)=>setDamage(p=>p.map(d=>{
     if(d.id!==id) return d;
     const updated={...d,[f]:f==="qty"?(Number(v)||0):v};
-    // basis 변경 시 수량 자동계산
+    // basis 변경 시 수량 자동계산 + "= 결과" 텍스트 자동갱신
     if(f==="basis"){
       const calc=parseBasisQty(v);
-      if(calc!==null) updated.qty=calc;
+      if(calc!==null){
+        updated.qty=calc;
+        // basis 텍스트 끝의 "= 이전값" 을 "= 새값"으로 갱신
+        const eqPat=/(\s*=\s*)\d+\.?\d*(\s*(?:㎡|㎥|m²|m³|m2|m3|m)?\s*)$/;
+        if(eqPat.test(v)) updated.basis=v.replace(eqPat,"$1"+calc+"$2");
+      }
     }
     return updated;
   })),[parseBasisQty]);
