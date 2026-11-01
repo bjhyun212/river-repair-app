@@ -418,6 +418,7 @@ export default function App(){
   const[projLoc,setProjLoc]=useState("");
   const[validReport,setValidReport]=useState(null);
   const[aiReview,setAiReview]=useState(null); // AI 검토 결과 {loading,corrections,summary}
+  const[wallType,setWallType]=useState("석축");
   const fileRef=useRef(null),jsonRef=useRef(null),chatEndRef=useRef(null);
 
   const handleNewWork=useCallback(()=>{if(!window.confirm("초기화?"))return;_nid=200;setDamage([]);setItems([]);setPhotoUrl(null);setPhotoFile(null);setAnalyzed(false);setRecoveryPlan({method:"",steps:[]});setChatLog([]);setProjName("");setProjLoc("");setValidReport(null);setView("analysis")},[]);
