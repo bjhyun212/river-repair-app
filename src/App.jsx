@@ -423,6 +423,14 @@ export default function App(){
   const[validReport,setValidReport]=useState(null);
   const[aiReview,setAiReview]=useState(null); // AI 검토 결과 {loading,corrections,summary}
   const[wallType,setWallType]=useState("석축");
+  // damage 항목에서 구조물 타입 자동 감지
+  useEffect(()=>{
+    const hasRC=damage.some(d=>d.enabled&&d.item&&(d.item.includes("RC")||d.item.includes("rc")||(d.item.includes("옹벽")&&!d.item.includes("철거")&&!d.item.includes("해체"))));
+    const has중력=damage.some(d=>d.enabled&&d.item&&d.item.includes("중력식"));
+    if(hasRC) setWallType("RC역T형옹벽");
+    else if(has중력) setWallType("중력식옹벽");
+    else if(damage.some(d=>d.enabled&&d.item&&(d.item.includes("석축")&&(d.item.includes("신설")||d.item.includes("쌓기"))))) setWallType("석축");
+  },[damage]);
   const fileRef=useRef(null),jsonRef=useRef(null),chatEndRef=useRef(null);
 
   const handleNewWork=useCallback(()=>{if(!window.confirm("초기화?"))return;_nid=200;setDamage([]);setItems([]);setPhotoUrl(null);setPhotoFile(null);setAnalyzed(false);setRecoveryPlan({method:"",steps:[]});setChatLog([]);setProjName("");setProjLoc("");setValidReport(null);setView("analysis")},[]);
@@ -522,16 +530,19 @@ export default function App(){
   // 산출근거 텍스트에서 수량 자동계산
   const parseBasisQty=useCallback((text)=>{
     if(!text) return null;
-    // 1) "= 숫자" 패턴 (계산 결과값만 — "L=20" 같은 변수할당 제외)
-    const eqMatch=text.match(/[\dm㎡㎥²³]\s*=\s*(\d+\.?\d*)\s*(?:[㎡㎥m²m³]?\s*)$/);
+    // "= 숫자" 제거한 순수 계산식 부분 추출
+    const noResult=text.replace(/\s*=\s*\d+\.?\d*\s*[㎡㎥m²m³]*\s*$/,"");
+    // 곱셈기호(×, *, x)로 분할하여 각 세그먼트에서 숫자 추출 후 곱셈
+    const parts=noResult.split(/\s*[×*]\s*|\s+x\s+/i);
+    if(parts.length>=2){
+      const nums=[];
+      for(const p of parts){const an=p.match(/\d+\.?\d*/g);if(an&&an.length>0)nums.push(Number(an[an.length-1]))}
+      if(nums.length>=2) return Math.round(nums.reduce((a,b)=>a*b,1)*100)/100;
+    }
+    // 곱셈 패턴 없으면 "= 숫자" 패턴 사용 (결과값만)
+    const eqMatch=text.match(/\S\s+=\s*(\d+\.?\d*)\s*[㎡㎥m²m³]*\s*$/);
     if(eqMatch) return Number(eqMatch[1]);
-    // 2) 곱셈기호(×, *, x)로 분할하여 각 세그먼트에서 숫자 추출 후 곱셈
-    const parts=text.split(/\s*[×*]\s*|\s+x\s+/i);
-    if(parts.length<2) return null;
-    const nums=[];
-    for(const p of parts){const an=p.match(/\d+\.?\d*/g);if(an&&an.length>0)nums.push(Number(an[an.length-1]))}
-    if(nums.length<2) return null;
-    return Math.round(nums.reduce((a,b)=>a*b,1)*100)/100;
+    return null;
   },[]);
   const updDamage=useCallback((id,f,v)=>setDamage(p=>p.map(d=>{
     if(d.id!==id) return d;
