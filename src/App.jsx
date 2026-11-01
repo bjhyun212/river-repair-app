@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo, Fragment, memo } from "react";
+import React, { useState, useRef, useCallback, useMemo, useEffect, Fragment, memo } from "react";
 
 /* ============================================================
    소규모주민숙원사업 설계자동화 VER2.0
