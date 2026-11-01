@@ -6,6 +6,19 @@ import React, { useState, useRef, useCallback, useMemo, useEffect, Fragment, mem
    ============================================================ */
 
 const fmt = (n) => (n ?? 0).toLocaleString("ko-KR");
+
+// AI 응답에서 JSON을 안전하게 파싱 (코드블록, 앞뒤 텍스트 제거)
+function robustJsonParse(text){
+  if(!text) return null;
+  try{ return JSON.parse(text); }catch{}
+  // ```json ... ``` 블록 추출
+  const cb=text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if(cb) try{ return JSON.parse(cb[1].trim()); }catch{}
+  // { ... } 블록 추출
+  const br=text.match(/\{[\s\S]*\}/);
+  if(br) try{ return JSON.parse(br[0]); }catch{}
+  return null;
+}
 const UNITS = ["m²","m³","m","hr","ton","일","식","본","개소","km","㎡","㎥"];
 const CAT_OPTIONS = [["1.","1.토공"],["2.","2.구조물공"],["3.","3.배수공"],["4.","4.호안공"],["5.","5.포장공"],["6.","6.부대공"]];
 const CAT_NAMES = {"1.":"토공","2.":"구조물공","3.":"배수공","4.":"호안공","5.":"포장공","6.":"부대공"};
