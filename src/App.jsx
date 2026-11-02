@@ -1547,8 +1547,7 @@ ${dmgList}
                         :<span className="text-green-600 font-bold shrink-0">✅ 적용됨</span>}
                     </div>)}
                     <div className="flex gap-2">
-                      <button onClick={()=>{aiReview.corrections.filter(c=>!c.applied).forEach(c=>applyCorrection(c));setTimeout(()=>alert("✅ 전체 적용 완료!\n\n'재검증' 버튼을 눌러 경고 해소 여부를 확인하세요."),300)}} className="flex-1 py-2 bg-blue-700 text-white rounded-lg font-bold text-sm hover:bg-blue-800">📋 전체 적용</button>
-                      <button onClick={reValidate} className="px-4 py-2 bg-green-600 text-white rounded-lg font-bold text-sm hover:bg-green-700">🔄 재검증</button>
+                      <button onClick={()=>{aiReview.corrections.filter(c=>!c.applied).forEach(c=>applyCorrection(c));setTimeout(()=>reValidate(),500)}} className="flex-1 py-2 bg-blue-700 text-white rounded-lg font-bold text-sm hover:bg-blue-800">📋 전체 적용 + 재검증</button>
                     </div>
                   </div>}
                   {(!aiReview.corrections||aiReview.corrections.length===0)&&<div>
