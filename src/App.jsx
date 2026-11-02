@@ -54,6 +54,30 @@ function robustJsonParse(text){
     }
     if(ei>si){r=tryP(text.slice(si,ei+1)); if(r) return r;}
   }
+  // 4: 잘린 JSON 복구 시도 — 열린 괄호를 닫아서 파싱
+  if(si>=0){
+    let raw=text.slice(si);
+    // 마지막 완전한 객체 뒤에서 자르기 (},{ 또는 }] 패턴)
+    const lastComplete=raw.lastIndexOf('},');
+    if(lastComplete>0){
+      raw=raw.slice(0,lastComplete+1)+']}';//corrections 배열 닫기
+      r=tryP(raw); if(r) return r;
+    }
+    // 단순히 열린 괄호 수만큼 닫기
+    let ob=0,osb=0,q=false,ec=false;
+    for(let i=0;i<raw.length;i++){
+      const c=raw[i];
+      if(ec){ec=false;continue;}
+      if(c==='\\'){ec=true;continue;}
+      if(c==='"'){q=!q;continue;}
+      if(!q){if(c==='{')ob++;else if(c==='}')ob--;if(c==='[')osb++;else if(c===']')osb--;}
+    }
+    // 문자열이 열려있으면 닫기
+    if(q) raw+='"';
+    for(let i=0;i<osb;i++) raw+=']';
+    for(let i=0;i<ob;i++) raw+='}';
+    r=tryP(raw); if(r) return r;
+  }
   return null;
 }
 const UNITS = ["m²","m³","m","hr","ton","일","식","본","개소","km","㎡","㎥"];
@@ -1241,8 +1265,8 @@ ${currentDamage || "(없음)"}
     const curItems=items.filter(i=>i.enabled).map(i=>`${i.cat} ${i.name} ${i.spec||""} ${i.qty}${i.unit} ${i.priceId}`).join("\n");
     const dmgList=damage.filter(d=>d.enabled).map(d=>`${d.item} ${d.qty}${d.unit} (${d.basis})`).join("\n");
     try{
-      const resp=await callAI({model:"claude-sonnet-4-5",max_tokens:1200,
-        system:"토목 수해복구 설계 검토 전문가. 반드시 유효한 JSON만 응답. 문자열 내 줄바꿈 금지.",
+      const resp=await callAI({model:"claude-sonnet-4-5",max_tokens:2500,
+        system:"토목 수해복구 설계 검토 전문가. 반드시 유효한 JSON만 응답. 문자열 값에 줄바꿈 넣지 마라. reason은 반드시 20자 이내로 짧게.",
         messages:[{role:"user",content:`설계내역서 검증에서 아래 경고가 발생했습니다. 원인을 분석하고 수정사항을 JSON으로 응답하세요.
 
 [검증 경고]
@@ -1254,13 +1278,14 @@ ${curItems}
 [복구설계 원본]
 ${dmgList}
 
-응답 형식:
-{"summary":"종합 검토 의견 한줄","corrections":[{"action":"add","cat":"5.","name":"공종명","spec":"규격","qty":숫자,"unit":"단위","priceId":"#.번호","reason":"추가사유"},{"action":"modify","name":"기존공종명","qty":새수량,"reason":"수정사유"},{"action":"delete","name":"삭제공종명","reason":"삭제사유"}]}
+응답 형식 (JSON만 출력, 앞뒤 설명 없이):
+{"summary":"한줄요약","corrections":[{"action":"add","cat":"5.","name":"공종명","spec":"규격","qty":숫자,"unit":"단위","priceId":"#.번호","reason":"20자이내"},{"action":"modify","name":"기존공종명","qty":새수량,"reason":"20자이내"},{"action":"delete","name":"삭제공종명","reason":"20자이내"}]}
 
 규칙:
+- reason은 반드시 20자 이내. 긴 설명 금지
 - action은 add/modify/delete만 사용
 - priceId: #.22표토,#.57터파기,#.77잡석,#.155석축,#.185레미콘무근,#.193레미콘철근,#.204거푸집,#.216철근,#.276양생,#.280부직포,#.308보조기층,#.310프라임,#.312택코팅,#.314기층아스콘,#.321표층아스콘,#.326덧씌우기,#.445가드레일
-- 중요: 콘크리트포장(레미콘타설#.185+거푸집#.204+양생#.276)과 아스콘포장(프라임+택코팅+기층/표층아스콘)은 완전히 다른 공법. 복구설계 원본에 "콘크리트포장"이 있으면 아스콘 공종을 추가하지 말 것`}]
+- 콘크리트포장(#.185+#.204+#.276)과 아스콘포장(프라임+택코팅+기층/표층)은 다른 공법. 원본에 콘크리트포장이면 아스콘 추가 금지`}]
       },getUserKey());
       const text=resp.content?.map(c=>c.type==="text"?c.text:"").join("")||"";
       let result = robustJsonParse(text);
