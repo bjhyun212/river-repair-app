@@ -10,16 +10,50 @@ const fmt = (n) => (n ?? 0).toLocaleString("ko-KR");
 // AI 응답에서 JSON을 안전하게 파싱 (코드블록, 앞뒤 텍스트 제거)
 function robustJsonParse(text){
   if(!text) return null;
-  // 문자열 내부 줄바꿈을 이스케이프 처리하는 헬퍼
-  const fixNewlines=(s)=>s.replace(/"([^"\\]*)(\n)([^"\\]*)"/g,(m)=>m.replace(/\n/g,"\\n"));
-  try{ return JSON.parse(text); }catch{}
-  try{ return JSON.parse(fixNewlines(text)); }catch{}
-  // ```json ... ``` 블록 추출
+  // 문자열 내부 줄바꿈·제어문자를 이스케이프 (문자 단위 순회로 정확히 처리)
+  const fixStr=(s)=>{
+    let out='',inQ=false,esc=false;
+    for(let i=0;i<s.length;i++){
+      const c=s[i];
+      if(esc){out+=c;esc=false;continue;}
+      if(c==='\\'){out+=c;esc=true;continue;}
+      if(c==='"'){inQ=!inQ;out+=c;continue;}
+      if(inQ){
+        if(c==='\n'){out+='\\n';continue;}
+        if(c==='\r'){continue;}
+        if(c==='\t'){out+='\\t';continue;}
+        const code=c.charCodeAt(0);
+        if(code<0x20){continue;} // 기타 제어문자 제거
+      }
+      out+=c;
+    }
+    return out;
+  };
+  const tryP=(s)=>{
+    try{return JSON.parse(s);}catch{}
+    try{return JSON.parse(fixStr(s));}catch{}
+    // 줄바꿈을 공백으로 전환 시도
+    try{return JSON.parse(s.replace(/[\r\n]+/g,' '));}catch{}
+    return null;
+  };
+  // 1: 전체 텍스트 직접 파싱
+  let r=tryP(text); if(r) return r;
+  // 2: ```json ... ``` 코드블록 추출
   const cb=text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if(cb){ const t=cb[1].trim(); try{ return JSON.parse(t); }catch{} try{ return JSON.parse(fixNewlines(t)); }catch{} }
-  // { ... } 블록 추출 (가장 바깥 중괄호)
-  const br=text.match(/\{[\s\S]*\}/);
-  if(br){ try{ return JSON.parse(br[0]); }catch{} try{ return JSON.parse(fixNewlines(br[0])); }catch{} }
+  if(cb){r=tryP(cb[1].trim()); if(r) return r;}
+  // 3: 가장 바깥 { ... } 추출 (중괄호 짝 맞추기)
+  const si=text.indexOf('{');
+  if(si>=0){
+    let d=0,ei=-1,q=false,e=false;
+    for(let i=si;i<text.length;i++){
+      const c=text[i];
+      if(e){e=false;continue;}
+      if(c==='\\'){e=true;continue;}
+      if(c==='"'){q=!q;continue;}
+      if(!q){if(c==='{')d++;else if(c==='}'){d--;if(d===0){ei=i;break;}}}
+    }
+    if(ei>si){r=tryP(text.slice(si,ei+1)); if(r) return r;}
+  }
   return null;
 }
 const UNITS = ["m²","m³","m","hr","ton","일","식","본","개소","km","㎡","㎥"];
@@ -1132,8 +1166,9 @@ ${currentDamage || "(없음)"}
     if(digT>0&&satoT===0) chk(false,"토공","사토 누락","터파기가 있는데 사토운반이 없음");
     if(digT>0&&backT===0) chk(false,"토공","뒤채움 누락","터파기가 있는데 뒤채움이 없음");
 
-    // ── 벤치마크 단가 비교 (외부 객관적 자료 기반) ──
-    // 복구설계 항목별 ㎡/m당 평균 공사비 범위 (조달청·한국건설기술연구원·충북도 실적 2025)
+    // ── 벤치마크 단가 비교 ──
+    // 내역서 항목 합산금액 ÷ 피해물량 = 단위당 금액 → 참고 범위와 비교
+    // ※ 참고 범위는 2025 단가목록 기반 복합단가 산정 (기초+본체+부대 포함 개략치)
     const BM=[
       {kw:/석축/,cat:"2.",unit:"㎡",lo:350000,hi:550000,label:"석축찰쌓기(기초포함)"},
       {kw:/옹벽|RC/,cat:"2.",unit:"㎡",lo:800000,hi:1500000,label:"RC옹벽(H3~5m)"},
@@ -1273,7 +1308,7 @@ ${dmgList}
     if(digT>0&&satoT===0)chk(false,"토공","사토 누락","터파기 있는데 사토 없음");
     // 벤치마크
     const CATS_MAP={"1.":"토공","2.":"구조물공","3.":"배수공","4.":"호안공","5.":"포장공","6.":"부대공"};
-    const BM=[{kw:/석축/,cat:"2.",lo:350000,hi:550000,label:"석축"},{kw:/옹벽|RC/,cat:"2.",lo:800000,hi:1500000,label:"RC옹벽"},{kw:/호안|블록/,cat:"4.",lo:80000,hi:150000,label:"호안"},{kw:/흄관|배수관/,cat:"3.",lo:80000,hi:500000,label:"배수"},{kw:/아스콘|포장/,cat:"5.",lo:15000,hi:30000,label:"포장"}];
+    const BM=[{kw:/석축/,cat:"2.",lo:350000,hi:550000,label:"석축"},{kw:/옹벽|RC/,cat:"2.",lo:800000,hi:1500000,label:"RC옹벽"},{kw:/호안|블록/,cat:"4.",lo:80000,hi:150000,label:"호안"},{kw:/흄관|배수관/,cat:"3.",lo:80000,hi:500000,label:"배수"},{kw:/콘크리트포장|콘크리트.*포장/,cat:"5.",lo:20000,hi:50000,label:"콘크리트포장"},{kw:/아스콘|아스팔트|포장/,cat:"5.",lo:15000,hi:30000,label:"포장"}];
     const catAmts={};["1.","2.","3.","4.","5.","6."].forEach(cc=>{catAmts[cc]=ni.filter(i=>i.cat===cc).reduce((s,i)=>{const p=getPrice(i);return s+Math.round(i.qty*p.total)},0)});
     const bmG={};
     damage.filter(d=>d.enabled).forEach(d=>{const bm=BM.find(b=>b.kw.test(d.item));if(!bm)return;if(!bmG[bm.cat])bmG[bm.cat]={qty:0,lo:bm.lo,hi:bm.hi,label:bm.label,unit:d.unit};bmG[bm.cat].qty+=d.qty;bmG[bm.cat].lo=Math.min(bmG[bm.cat].lo,bm.lo);bmG[bm.cat].hi=Math.max(bmG[bm.cat].hi,bm.hi)});
