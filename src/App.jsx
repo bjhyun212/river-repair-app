@@ -1160,7 +1160,7 @@ ${currentDamage || "(없음)"}
     const dmeT=sumQ("되메우기");
 
     const checks=[];
-    const chk=(ok,cat,item,msg)=>checks.push({ok,cat,item,msg});
+    const chk=(ok,cat,item,msg,level="warn")=>checks.push({ok,cat,item,msg,level});
 
     // ── 물량 균형 검증 ──
     chk(conT<=digT||digT===0,"토공/구조물","레미콘 vs 터파기",
@@ -1230,7 +1230,7 @@ ${currentDamage || "(없음)"}
       const ok=unitCost>=g.lo*0.7&&unitCost<=g.hi*1.3;
       const status=unitCost<g.lo*0.7?"과소 (물량 부족 또는 공종 누락 가능)":unitCost>g.hi*1.3?"과다 (불필요 공종 또는 물량 과대 가능)":"적정";
       chk(ok,CAT_NAMES[cc]||cc,`${g.label} 벤치마크`,
-        `${CAT_NAMES[cc]} ${(amt/10000).toFixed(0)}만원 ÷ ${g.qty}${g.unit} = ${(unitCost/10000).toFixed(1)}만원/${g.unit} (기준: ${(g.lo/10000).toFixed(0)}~${(g.hi/10000).toFixed(0)}만원) → ${status}`);
+        `${CAT_NAMES[cc]} ${(amt/10000).toFixed(0)}만원 ÷ ${g.qty}${g.unit} = ${(unitCost/10000).toFixed(1)}만원/${g.unit} (기준: ${(g.lo/10000).toFixed(0)}~${(g.hi/10000).toFixed(0)}만원) → ${status}`,"info");
     });
 
     // ── 자동 보정 ──
@@ -1249,8 +1249,9 @@ ${currentDamage || "(없음)"}
     }
 
     const okCount=checks.filter(c=>c.ok).length;
-    const warnCount=checks.filter(c=>!c.ok).length;
-    const report={checks,okCount,warnCount,corrected,
+    const warnCount=checks.filter(c=>!c.ok&&c.level!=="info").length;
+    const infoCount=checks.filter(c=>!c.ok&&c.level==="info").length;
+    const report={checks,okCount,warnCount,infoCount,corrected,
       summary:{터파기:Math.round(digT),레미콘:Math.round(conT),거푸집:Math.round(formT),양생:Math.round(cureT),
         뒤채움:Math.round(backT),사토:Math.round(satoT),부직포:Math.round(bukT),표토:Math.round(pyotoT)}};
     setValidReport(report);
@@ -1262,7 +1263,8 @@ ${currentDamage || "(없음)"}
   const handleAiReview=useCallback(async()=>{
     if(!validReport||!validReport.checks.length) return;
     setAiReview({loading:true,corrections:[],summary:""});
-    const warns=validReport.checks.filter(c=>!c.ok).map(c=>`[${c.cat}] ${c.item}: ${c.msg}`).join("\n");
+    const warns=validReport.checks.filter(c=>!c.ok&&c.level!=="info").map(c=>`[${c.cat}] ${c.item}: ${c.msg}`).join("\n");
+    if(!warns){setAiReview({loading:false,summary:"✅ 경고 항목이 없습니다. (벤치마크는 참고사항)",corrections:[]});return;}
     const curItems=items.filter(i=>i.enabled).map(i=>`${i.cat} ${i.name} ${i.spec||""} ${i.qty}${i.unit} ${i.priceId}`).join("\n");
     const dmgList=damage.filter(d=>d.enabled).map(d=>`${d.item} ${d.qty}${d.unit} (${d.basis})`).join("\n");
     try{
@@ -1323,7 +1325,7 @@ ${dmgList}
     const steelT=sumQ("철근"),stoneT=sumQ("석축"),pyotoT=sumQ("표토제거");
     const bukT=ni.filter(i=>i.name?.includes("부직포")).reduce((s,i)=>s+i.qty,0);
     const checks=[];
-    const chk=(ok,cat,item,msg)=>checks.push({ok,cat,item,msg});
+    const chk=(ok,cat,item,msg,level="warn")=>checks.push({ok,cat,item,msg,level});
     chk(conT<=digT||digT===0,"토공/구조물","레미콘 vs 터파기",`레미콘${Math.round(conT)}㎥ ${conT<=digT?"≤":">"} 터파기${Math.round(digT)}㎥ → ${conT<=digT?"정상":"⚠️ 과대"}`);
     chk(cureT<=formT*1.3||formT===0,"구조물","양생 vs 거푸집",`양생${Math.round(cureT)}㎡ ${cureT<=formT*1.3?"≤":">"} 거푸집${Math.round(formT)}㎡×1.3 → ${cureT<=formT*1.3?"정상":"⚠️ 과대"}`);
     chk(satoT<=digT||digT===0,"토공","사토 vs 터파기",`사토${Math.round(satoT)}㎥ ${satoT<=digT?"≤":">"} 터파기${Math.round(digT)}㎥ → ${satoT<=digT?"정상":"⚠️ 과대"}`);
@@ -1338,11 +1340,11 @@ ${dmgList}
     const catAmts={};["1.","2.","3.","4.","5.","6."].forEach(cc=>{catAmts[cc]=ni.filter(i=>i.cat===cc).reduce((s,i)=>{const p=getPrice(i);return s+Math.round(i.qty*p.total)},0)});
     const bmG={};
     damage.filter(d=>d.enabled).forEach(d=>{const bm=BM.find(b=>b.kw.test(d.item));if(!bm)return;if(!bmG[bm.cat])bmG[bm.cat]={qty:0,lo:bm.lo,hi:bm.hi,label:bm.label,unit:d.unit};bmG[bm.cat].qty+=d.qty;bmG[bm.cat].lo=Math.min(bmG[bm.cat].lo,bm.lo);bmG[bm.cat].hi=Math.max(bmG[bm.cat].hi,bm.hi)});
-    Object.entries(bmG).forEach(([cc,g])=>{const amt=catAmts[cc]||0;if(!amt||!g.qty)return;const uc=Math.round(amt/g.qty);const ok=uc>=g.lo*0.7&&uc<=g.hi*1.3;chk(ok,CATS_MAP[cc]||cc,`${g.label} 벤치마크`,`${(amt/10000).toFixed(0)}만÷${g.qty}${g.unit}=${(uc/10000).toFixed(1)}만/${g.unit} (기준${(g.lo/10000).toFixed(0)}~${(g.hi/10000).toFixed(0)}만) → ${ok?"적정":uc<g.lo*0.7?"과소":"과다"}`)});
-    const okC=checks.filter(c=>c.ok).length,wC=checks.filter(c=>!c.ok).length;
+    Object.entries(bmG).forEach(([cc,g])=>{const amt=catAmts[cc]||0;if(!amt||!g.qty)return;const uc=Math.round(amt/g.qty);const ok=uc>=g.lo*0.7&&uc<=g.hi*1.3;chk(ok,CATS_MAP[cc]||cc,`${g.label} 벤치마크`,`${(amt/10000).toFixed(0)}만÷${g.qty}${g.unit}=${(uc/10000).toFixed(1)}만/${g.unit} (기준${(g.lo/10000).toFixed(0)}~${(g.hi/10000).toFixed(0)}만) → ${ok?"적정":uc<g.lo*0.7?"과소":"과다"}`,"info")});
+    const okC=checks.filter(c=>c.ok).length,wC=checks.filter(c=>!c.ok&&c.level!=="info").length,iC=checks.filter(c=>!c.ok&&c.level==="info").length;
     const prevWarn=validReport?.warnCount||0;
     const resolved=prevWarn-wC;
-    setValidReport({checks,okCount:okC,warnCount:wC,corrected:0,
+    setValidReport({checks,okCount:okC,warnCount:wC,infoCount:iC,corrected:0,
       summary:{터파기:Math.round(digT),레미콘:Math.round(conT),거푸집:Math.round(formT),양생:Math.round(cureT),뒤채움:Math.round(backT),사토:Math.round(satoT),부직포:Math.round(bukT),표토:Math.round(pyotoT)},
       resolvedMsg:resolved>0?`✅ ${resolved}건 경고가 해소되었습니다.${wC>0?` (잔여 ${wC}건)`:" 모든 검증을 통과했습니다!"}`:null
     });
@@ -1516,7 +1518,7 @@ ${dmgList}
               <h4 className="font-bold text-sm mb-3 flex items-center gap-2">
                 {validReport.warnCount>0?"⚠️":"✅"} 적용된 물량 내역을 검증합니다
                 <span className={`text-xs px-2 py-0.5 rounded-full ${validReport.warnCount>0?"bg-orange-200 text-orange-800":"bg-green-200 text-green-800"}`}>
-                  {validReport.okCount}건 정상 / {validReport.warnCount}건 주의{validReport.corrected>0?` / ${validReport.corrected}건 자동보정`:""}
+                  {validReport.okCount}건 정상 / {validReport.warnCount}건 주의{validReport.infoCount>0?` / ${validReport.infoCount}건 참고`:""}{validReport.corrected>0?` / ${validReport.corrected}건 자동보정`:""}
                 </span>
                 <button onClick={reValidate} className="ml-auto px-3 py-1 bg-slate-200 text-slate-700 text-xs rounded-lg hover:bg-slate-300 font-medium">🔄 재검증</button>
               </h4>
@@ -1527,11 +1529,11 @@ ${dmgList}
                 </div>)}
               </div>
               <div className="space-y-1">
-                {validReport.checks.map((c,i)=><div key={i} className={`flex items-start gap-2 text-xs px-2 py-1 rounded ${c.ok?"bg-white":"bg-orange-100 border border-orange-200"}`}>
-                  <span className="mt-0.5 shrink-0">{c.ok?"✅":"⚠️"}</span>
+                {validReport.checks.map((c,i)=><div key={i} className={`flex items-start gap-2 text-xs px-2 py-1 rounded ${c.ok?"bg-white":c.level==="info"?"bg-blue-50 border border-blue-200":"bg-orange-100 border border-orange-200"}`}>
+                  <span className="mt-0.5 shrink-0">{c.ok?"✅":c.level==="info"?"ℹ️":"⚠️"}</span>
                   <span className="text-slate-500 w-16 shrink-0">[{c.cat}]</span>
                   <span className="font-medium w-28 shrink-0">{c.item}</span>
-                  <span className={c.ok?"text-slate-600":"text-orange-800 font-medium"}>{c.msg}</span>
+                  <span className={c.ok?"text-slate-600":c.level==="info"?"text-blue-700":"text-orange-800 font-medium"}>{c.msg}</span>
                 </div>)}
               </div>
               {validReport.warnCount>0&&<div className="mt-3 space-y-3">
