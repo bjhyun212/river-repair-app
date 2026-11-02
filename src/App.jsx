@@ -10,13 +10,16 @@ const fmt = (n) => (n ?? 0).toLocaleString("ko-KR");
 // AI 응답에서 JSON을 안전하게 파싱 (코드블록, 앞뒤 텍스트 제거)
 function robustJsonParse(text){
   if(!text) return null;
+  // 문자열 내부 줄바꿈을 이스케이프 처리하는 헬퍼
+  const fixNewlines=(s)=>s.replace(/"([^"\\]*)(\n)([^"\\]*)"/g,(m)=>m.replace(/\n/g,"\\n"));
   try{ return JSON.parse(text); }catch{}
+  try{ return JSON.parse(fixNewlines(text)); }catch{}
   // ```json ... ``` 블록 추출
   const cb=text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if(cb) try{ return JSON.parse(cb[1].trim()); }catch{}
-  // { ... } 블록 추출
+  if(cb){ const t=cb[1].trim(); try{ return JSON.parse(t); }catch{} try{ return JSON.parse(fixNewlines(t)); }catch{} }
+  // { ... } 블록 추출 (가장 바깥 중괄호)
   const br=text.match(/\{[\s\S]*\}/);
-  if(br) try{ return JSON.parse(br[0]); }catch{}
+  if(br){ try{ return JSON.parse(br[0]); }catch{} try{ return JSON.parse(fixNewlines(br[0])); }catch{} }
   return null;
 }
 const UNITS = ["m²","m³","m","hr","ton","일","식","본","개소","km","㎡","㎥"];
@@ -1142,7 +1145,8 @@ ${currentDamage || "(없음)"}
       {kw:/전석/,cat:"4.",unit:"㎡",lo:120000,hi:200000,label:"전석쌓기"},
       {kw:/흄관|배수관/,cat:"3.",unit:"m",lo:80000,hi:500000,label:"흄관부설(관경별)"},
       {kw:/측구|수로/,cat:"3.",unit:"m",lo:150000,hi:300000,label:"RC측구"},
-      {kw:/아스콘|포장/,cat:"5.",unit:"㎡",lo:15000,hi:30000,label:"아스콘포장(기층+표층)"},
+      {kw:/콘크리트포장|콘크리트.*포장/,cat:"5.",unit:"㎡",lo:20000,hi:50000,label:"콘크리트포장"},
+      {kw:/아스콘|아스팔트|포장/,cat:"5.",unit:"㎡",lo:15000,hi:30000,label:"아스콘포장(기층+표층)"},
     ];
     // 각 대분류별 전체금액 ÷ 해당 복구설계 물량합계 = 단위당 금액
     const catAmts={};
