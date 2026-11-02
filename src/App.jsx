@@ -438,7 +438,6 @@ export default function App(){
   const[projLoc,setProjLoc]=useState("");
   const[validReport,setValidReport]=useState(null);
   const[aiReview,setAiReview]=useState(null); // AI 검토 결과 {loading,corrections,summary}
-  const[needRebuild,setNeedRebuild]=useState(false);
   const[wallType,setWallType]=useState("석축");
   // damage 항목에서 구조물 타입 자동 감지
   useEffect(()=>{
@@ -673,9 +672,7 @@ ${currentDamage || "(없음)"}
         }catch(je){console.error("JSON파싱오류",je)}
         // JSON 태그 제거하여 설명만 표시
         text = text.replace(/<!--DAMAGE_UPDATE-->[\s\S]*?<!--\/DAMAGE_UPDATE-->/,"").trim();
-        text = "✅ 피해현황이 수정되었습니다. 설계내역서를 자동 재생성합니다.\n\n" + text;
-        // damage 변경 시 내역서 자동 재생성 플래그
-        setNeedRebuild(true);
+        text = "✅ 피해현황이 수정되었습니다.\n\n" + text;
       }
 
       setChatLog(p=>p.map(m=>m.text==="⏳ AI 처리 중..."?{...m,text:text||"처리 완료"}:m));
@@ -1201,14 +1198,6 @@ ${currentDamage || "(없음)"}
     setView("estimate"); window.scrollTo(0,0);
   },[damage,wallType]);
 
-  // ── 수정질문 후 damage 변경 시 내역서 자동 재생성 ──
-  useEffect(()=>{
-    if(needRebuild){
-      setNeedRebuild(false);
-      handleBuildEstimate();
-    }
-  },[needRebuild,handleBuildEstimate]);
-
   // ── AI 검토: 검증 경고를 분석하여 수정 제안 ──
   const handleAiReview=useCallback(async()=>{
     if(!validReport||!validReport.checks.length) return;
@@ -1233,7 +1222,10 @@ ${dmgList}
 응답 형식:
 {"summary":"종합 검토 의견 한줄","corrections":[{"action":"add","cat":"5.","name":"공종명","spec":"규격","qty":숫자,"unit":"단위","priceId":"#.번호","reason":"추가사유"},{"action":"modify","name":"기존공종명","qty":새수량,"reason":"수정사유"},{"action":"delete","name":"삭제공종명","reason":"삭제사유"}]}
 
-규칙: action은 add/modify/delete만 사용. priceId는 #.22표토,#.57터파기,#.77잡석,#.155석축,#.193레미콘,#.204거푸집,#.276양생,#.280부직포,#.308보조기층,#.310프라임,#.312택코팅,#.314기층아스콘,#.321표층아스콘,#.326덧씌우기,#.445가드레일 등`}]
+규칙:
+- action은 add/modify/delete만 사용
+- priceId: #.22표토,#.57터파기,#.77잡석,#.155석축,#.185레미콘무근,#.193레미콘철근,#.204거푸집,#.216철근,#.276양생,#.280부직포,#.308보조기층,#.310프라임,#.312택코팅,#.314기층아스콘,#.321표층아스콘,#.326덧씌우기,#.445가드레일
+- 중요: 콘크리트포장(레미콘타설#.185+거푸집#.204+양생#.276)과 아스콘포장(프라임+택코팅+기층/표층아스콘)은 완전히 다른 공법. 복구설계 원본에 "콘크리트포장"이 있으면 아스콘 공종을 추가하지 말 것`}]
       },getUserKey());
       const text=resp.content?.map(c=>c.type==="text"?c.text:"").join("")||"";
       let result = robustJsonParse(text);
