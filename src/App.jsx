@@ -496,6 +496,7 @@ export default function App(){
   const[projLoc,setProjLoc]=useState("");
   const[validReport,setValidReport]=useState(null);
   const[aiReview,setAiReview]=useState(null); // AI 검토 결과 {loading,corrections,summary}
+  const[pendingRevalidate,setPendingRevalidate]=useState(false); // 전체적용 후 재검증 대기
   const[wallType,setWallType]=useState("석축");
   // damage 항목에서 구조물 타입 자동 감지
   useEffect(()=>{
@@ -1348,6 +1349,14 @@ ${dmgList}
     setAiReview(null);
   },[items,damage,validReport?.warnCount]);
 
+  // ── 전체적용 후 items가 반영되면 자동 재검증 ──
+  useEffect(()=>{
+    if(pendingRevalidate){
+      setPendingRevalidate(false);
+      reValidate();
+    }
+  },[pendingRevalidate,items,reValidate]);
+
 
   // ── FIX3: items 변경 시 사급/관급 자동 재계산 ──
   const recalcSagubGwangub=useCallback(()=>{
@@ -1547,7 +1556,7 @@ ${dmgList}
                         :<span className="text-green-600 font-bold shrink-0">✅ 적용됨</span>}
                     </div>)}
                     <div className="flex gap-2">
-                      <button onClick={()=>{aiReview.corrections.filter(c=>!c.applied).forEach(c=>applyCorrection(c));setTimeout(()=>reValidate(),500)}} className="flex-1 py-2 bg-blue-700 text-white rounded-lg font-bold text-sm hover:bg-blue-800">📋 전체 적용 + 재검증</button>
+                      <button onClick={()=>{aiReview.corrections.filter(c=>!c.applied).forEach(c=>applyCorrection(c));setPendingRevalidate(true)}} className="flex-1 py-2 bg-blue-700 text-white rounded-lg font-bold text-sm hover:bg-blue-800">📋 전체 적용 + 재검증</button>
                     </div>
                   </div>}
                   {(!aiReview.corrections||aiReview.corrections.length===0)&&<div>
